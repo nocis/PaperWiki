@@ -1,0 +1,34 @@
+services:
+  gemini-cli-node:
+    build:
+      context: .
+      args:
+        USER_ID: "${UID:-1000}"
+        GROUP_ID: "${GID:-1000}"
+        USERNAME: "gemini"
+      dockerfile: ./sandbox.Dockerfile
+
+    container_name: gemini-cli-node
+
+    # Mount your current codebase into the container
+    volumes:
+      - ../../:/app
+      # Mount the named volume to persist the CLI's configuration
+      - ./gemini-config:/home/gemini/.gemini
+
+    # Set the working directory inside the container to your mounted codebase
+    working_dir: /app
+
+    # Keep the container running in interactive mode
+    stdin_open: true
+    tty: true
+
+    # Command to run on container startup. This will drop you into a shell
+    # inside the container, from where you can then run `gemini`.
+    command: /bin/bash
+
+    # Environment variable for your Google API Key (if you're not using personal account login)
+    # Replace 'YOUR_GEMINI_API_KEY' with your actual key
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - TERM=xterm-256color
