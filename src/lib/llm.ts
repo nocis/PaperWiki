@@ -100,7 +100,7 @@ export function extractJson<T>(raw: string): T {
   }
 }
 
-/** Structured JSON completion with defensive parsing and one format fallback. */
+/** Structured JSON completion with defensive parsing and one malformed-output retry. */
 export async function llmJson<T>(opts: {
   model: string;
   system?: string;
@@ -112,25 +112,56 @@ export async function llmJson<T>(opts: {
   if (opts.system) messages.push({ role: "system", content: opts.system });
   messages.push({ role: "user", content: opts.user });
 
-  const base = {
-    model: opts.model,
-    messages,
-    temperature: opts.temperature ?? 0.2,
-    max_tokens: opts.maxTokens ?? 8192,
-  };
+  const requestContent = async (requestMessages: ChatMessage[]): Promise<string> => {
+    const base = {
+      model: opts.model,
+      messages: requestMessages,
+      temperature: opts.temperature ?? 0.2,
+      max_tokens: opts.maxTokens ?? 8192,
+    };
 
-  let content: string;
-  try {
-    content = await postChatCompletion({ ...base, response_format: { type: "json_object" } });
-  } catch (err) {
-    // Some gateway models may reject response_format — retry once without it.
-    if (err instanceof Error && /response_format|json_object/i.test(err.message)) {
-      content = await postChatCompletion(base);
-    } else {
+    try {
+      return await postChatCompletion({ ...base, response_format: { type: "json_object" } });
+    } catch (err) {
+      // Some gateway models may reject response_format — retry once without it.
+      if (err instanceof Error && /response_format|json_object/i.test(err.message)) {
+        return postChatCompletion(base);
+      }
       throw err;
     }
+  };
+
+  const content = await requestContent(messages);
+  try {
+    return extractJson<T>(content);
+  } catch (firstError) {
+    // Reasoning models can occasionally exhaust their output budget and emit
+    // truncated JSON. Retry the same task with an explicit compact-output
+    // budget and show a bounded sample of the malformed response for repair.
+    const sample =
+      content.length > 2000
+        ? `${content.slice(0, 1000)}\n...[truncated sample]...\n${content.slice(-1000)}`
+        : content;
+    const retryMessages: ChatMessage[] = [
+      {
+        role: "system",
+        content: `${opts.system ?? "You return structured JSON."}\n\nYour previous response was malformed or truncated JSON. Return exactly one complete, syntactically valid JSON object. No markdown fences, prose, comments, or trailing commas.`,
+      },
+      {
+        role: "user",
+        content: `${opts.user}\n\nCRITICAL OUTPUT BUDGET:\n- Complete and close the entire JSON object.\n- Keep every prose string concise (under 800 characters).\n- Use at most 6 contributions and at most 20 references when those fields are requested.\n- Omit no required fields.\n\nMALFORMED PREVIOUS RESPONSE (sample):\n${sample}`,
+      },
+    ];
+
+    const retryContent = await requestContent(retryMessages);
+    try {
+      return extractJson<T>(retryContent);
+    } catch (retryError) {
+      const firstMessage = firstError instanceof Error ? firstError.message : String(firstError);
+      const retryMessage = retryError instanceof Error ? retryError.message : String(retryError);
+      throw new Error(`LLM JSON parse failed after compact retry. First: ${firstMessage}. Retry: ${retryMessage}`);
+    }
   }
-  return extractJson<T>(content);
 }
 
 /** Plain chat completion (used by the /chat hub). */

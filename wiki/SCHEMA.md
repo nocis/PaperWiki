@@ -30,7 +30,7 @@ that writes to `wiki/` MUST follow this document.
    already-compiled slug, it is moved to `papers/duplicates/` and the run
    continues. Only LLM/processing failures abort a run.
 5. **Flat archive, stable URLs.** PDFs live flat in `papers/compiled/` and are
-   symlinked to `public/pdfs/<slug>.pdf`. Topic reorganizations never move PDFs.
+   served at `/pdfs/<slug>.pdf` by the app. Topic reorganizations never move PDFs.
 6. **Wikilinks in body only.** Body text uses `[[slug]]` (resolved to app routes
    by the web renderer, by slug alone). YAML frontmatter uses bare slugs.
 7. **Bidirectional linking.** source `milestone` ↔ topic Source Cluster;

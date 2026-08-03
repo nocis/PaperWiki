@@ -23,8 +23,8 @@ yarn compile        # 2. e2e test with the 3 PDFs already in papers/new/
 ```
 
 Then verify: `papers/new/` empty · `papers/compiled/` has 3 PDFs named by REAL
-title slug (e.g. `2006.11239v2.pdf` → `<real-title>.pdf`) · `public/pdfs/`
-symlinks · `wiki/papers/*.md` + `wiki/topics/*.md` · `comments/<slug>/` dirs ·
+title slug (e.g. `2006.11239v2.pdf` → `<real-title>.pdf`) · `/pdfs/<slug>.pdf`
+serves from the compiled archive · `wiki/papers/*.md` + `wiki/topics/*.md` · `comments/<slug>/` dirs ·
 `wiki/log.md` entries · `data/wiki-db.json` cites/citedBy cross-links.
 
 Optional isolated fixtures (3 fake papers with citation chain, 2 with arXiv-style names):

@@ -41,10 +41,13 @@ Rules:
 - Write all prose fields in language "${opts.language}".
 - "predecessors", "crossTopicImpacts" and "contradictions" may ONLY reference paper slugs from the EXISTING WIKI INDEX provided by the user. Never invent slugs. If none apply, use empty arrays.
 - Derive contributions from the delta between the field's prior art (the paper's own related work) and what the paper adds — never state them as isolated claims.
-- essence: 3 sentences max (scope, method, insight).
-- references: the paper's bibliography entries as raw strings, best-effort, max 50.
+- essence: 3 sentences max (scope, method, insight), under 600 characters.
+- contributions: 3-6 concise deltas, each under 200 characters.
+- references: the paper's bibliography entries as raw strings, best-effort, max 25.
+- novelInsight, limitations, researchFrontier, and relationsContext: under 800 characters each.
 - evolutionaryChain.role: "origin" (starts a new line of work), "intermediate" (builds on predecessors), "terminal" (closes/supersedes a line), or "fork" (splits a line).
-- relationsContext: one short paragraph positioning the paper in the field's timeline (its predecessors, what it supersedes or contradicts).`;
+- relationsContext: one short paragraph positioning the paper in the field's timeline (its predecessors, what it supersedes or contradicts).
+- Keep the complete JSON response compact so it fits within the output token limit.`;
 
   const user = `EXISTING WIKI INDEX (papers you may reference by slug):
 ${opts.kbIndex || "(empty — this is one of the first papers)"}

@@ -6,6 +6,7 @@
  * wiki pages, never hand-edited.
  */
 import matter from "gray-matter";
+import type { Dirent } from "fs";
 import * as fs from "fs/promises";
 import * as path from "path";
 
@@ -17,7 +18,6 @@ export const ROOT = process.cwd();
 export const PAPERS_NEW = path.join(ROOT, "papers", "new");
 export const PAPERS_COMPILED = path.join(ROOT, "papers", "compiled");
 export const PAPERS_DUPLICATES = path.join(ROOT, "papers", "duplicates");
-export const PUBLIC_PDFS = path.join(ROOT, "public", "pdfs");
 export const COMMENTS_DIR = path.join(ROOT, "comments");
 export const WIKI_DIR = path.join(ROOT, "wiki");
 export const WIKI_PAPERS_DIR = path.join(WIKI_DIR, "papers");
@@ -32,7 +32,6 @@ export async function ensureDirs(): Promise<void> {
   for (const dir of [
     PAPERS_NEW,
     PAPERS_COMPILED,
-    PUBLIC_PDFS,
     COMMENTS_DIR,
     WIKI_PAPERS_DIR,
     WIKI_TOPICS_DIR,
@@ -173,7 +172,7 @@ export function today(): string {
 // ---------------------------------------------------------------------------
 
 async function listMarkdownFiles(dir: string, recursive: boolean): Promise<string[]> {
-  let entries: fs.Dirent[];
+  let entries: Dirent[];
   try {
     entries = await fs.readdir(dir, { withFileTypes: true });
   } catch {
@@ -475,7 +474,7 @@ export function resolveReferences(
 /** Recursively find PDFs in papers/new/ (handles nested drops). */
 export async function findInboxPdfs(): Promise<string[]> {
   const walk = async (dir: string): Promise<string[]> => {
-    let entries: fs.Dirent[];
+    let entries: Dirent[];
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
     } catch {

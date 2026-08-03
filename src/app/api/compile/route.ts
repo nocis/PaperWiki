@@ -90,8 +90,8 @@ export async function GET() {
       events: [],
     },
     stepCatalog: COMPILE_STEP_CATALOG,
-    progressLog: "data/compile-progress.jsonl",
-    statusFile: "data/compile-status.json",
+    progressLog: ".log/compile-progress.jsonl",
+    statusFile: ".log/compile-status.json",
   });
 }
 
@@ -133,8 +133,8 @@ export async function POST() {
       ok: true,
       runId,
       status: "running",
-      progressLog: "data/compile-progress.jsonl",
-      statusFile: "data/compile-status.json",
+      progressLog: ".log/compile-progress.jsonl",
+      statusFile: ".log/compile-status.json",
     },
     { status: 202 }
   );

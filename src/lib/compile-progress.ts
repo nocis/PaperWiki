@@ -1,17 +1,17 @@
 /**
  * Persistent compile-run progress tracking.
  *
- * data/compile-progress.jsonl is the append-only event log (source of truth
- * for history). data/compile-status.json is the atomically-updated latest
+ * .log/compile-progress.jsonl is the append-only event log (source of truth
+ * for history). .log/compile-status.json is the atomically-updated latest
  * snapshot consumed by the dashboard.
  */
 import { randomUUID } from "crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-export const COMPILE_PROGRESS_LOG = path.join(DATA_DIR, "compile-progress.jsonl");
-export const COMPILE_STATUS_PATH = path.join(DATA_DIR, "compile-status.json");
+const LOG_DIR = path.join(process.cwd(), ".log");
+export const COMPILE_PROGRESS_LOG = path.join(LOG_DIR, "compile-progress.jsonl");
+export const COMPILE_STATUS_PATH = path.join(LOG_DIR, "compile-status.json");
 
 export type CompileRunStatus = "idle" | "running" | "completed" | "failed";
 export type CompileEventStatus = "started" | "completed" | "failed" | "skipped";
@@ -42,7 +42,7 @@ export const COMPILE_PAPER_STEPS: CompileStepInfo[] = [
   { id: "update-cited-by", label: "Update cited-by links" },
   { id: "synthesize-topic", label: "Synthesize topic with LLM" },
   { id: "write-topic-page", label: "Write topic wiki page" },
-  { id: "move-pdf", label: "Move PDF and create public link" },
+  { id: "move-pdf", label: "Move PDF to compiled archive" },
   { id: "create-comments-dir", label: "Create comments directory" },
   { id: "rebuild-derived-files", label: "Rebuild index, log, and database" },
 ];
@@ -100,14 +100,14 @@ export function createCompileRunId(): string {
 }
 
 async function writeSnapshotAtomic(snapshot: CompileRunSnapshot): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+  await fs.mkdir(LOG_DIR, { recursive: true });
   const tmp = `${COMPILE_STATUS_PATH}.${process.pid}.${Date.now()}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(snapshot, null, 2) + "\n");
   await fs.rename(tmp, COMPILE_STATUS_PATH);
 }
 
 async function appendEventLine(event: CompileProgressEvent): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+  await fs.mkdir(LOG_DIR, { recursive: true });
   await fs.appendFile(COMPILE_PROGRESS_LOG, JSON.stringify(event) + "\n");
 }
 

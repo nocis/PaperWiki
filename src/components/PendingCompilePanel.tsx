@@ -106,8 +106,8 @@ export default function PendingCompilePanel({
   const router = useRouter();
   const [status, setStatus] = useState<CompileRunSnapshot | null>(initialStatus);
   const [catalog, setCatalog] = useState(fallbackCatalog);
-  const [progressLog, setProgressLog] = useState("data/compile-progress.jsonl");
-  const [statusFile, setStatusFile] = useState("data/compile-status.json");
+  const [progressLog, setProgressLog] = useState(".log/compile-progress.jsonl");
+  const [statusFile, setStatusFile] = useState(".log/compile-status.json");
   const [requestError, setRequestError] = useState<string | null>(null);
   const [shouldPoll, setShouldPoll] = useState(initialStatus?.status === "running");
   const sawRunningRef = useRef(initialStatus?.status === "running");

@@ -23,7 +23,6 @@ import {
   PAPERS_NEW,
   PAPERS_COMPILED,
   PAPERS_DUPLICATES,
-  PUBLIC_PDFS,
   COMMENTS_DIR,
   WIKI_PAPERS_DIR,
   WIKI_TOPICS_DIR,
@@ -511,20 +510,12 @@ async function processPdf(pdfPath: string, model: string, index: number, total: 
   // --- Move PDF (Phase 3 + hard gate) ------------------------------------------
   await runCompileStep(
     "move-pdf",
-    "Move PDF and create public link",
+    "Move PDF to compiled archive",
     async () => {
       const targetPath = path.join(PAPERS_COMPILED, `${slug}.pdf`);
       await fs.rename(pdfPath, targetPath);
       await assertRemovedFromInbox(basename);
 
-      // Symlink into public/ (relative target; copy fallback).
-      const linkPath = path.join(PUBLIC_PDFS, `${slug}.pdf`);
-      try {
-        await fs.unlink(linkPath).catch(() => {});
-        await fs.symlink(path.join("..", "..", "papers", "compiled", `${slug}.pdf`), linkPath);
-      } catch {
-        await fs.copyFile(targetPath, linkPath);
-      }
     },
     { ...paperCtx, slug }
   );
