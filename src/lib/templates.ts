@@ -4,16 +4,41 @@
  */
 import { figureLabel } from "./extract-figures";
 import { renderCitationsSection, type CitationRecord } from "./citations";
-import type { PaperFrontmatter, TopicFrontmatter } from "./wiki";
+import type { PaperFrontmatter, PaperRelation, TopicFrontmatter } from "./wiki";
+
+export function renderRelationsLines(relations: PaperRelation[]): string {
+  return relations.length > 0
+    ? relations.map((r) => `- **${r.relation}** [[${r.slug}]] — ${r.note}`).join("\n")
+    : "_No relations to existing wiki papers detected._";
+}
+
+/**
+ * Replace only the relation bullet lines inside a paper body's ## Relations
+ * section (the relationsContext prose is kept). Used by the end-of-run
+ * relation finalize pass.
+ */
+export function patchRelationsBlock(body: string, relations: PaperRelation[]): string {
+  const start = body.indexOf("## Relations");
+  if (start === -1) return body;
+  const end = body.indexOf("\n## Citations", start);
+  const sectionEnd = end === -1 ? body.length : end;
+  const block = body.slice(start, sectionEnd);
+  const firstBullet = /(?:^|\n)- \*\*[^*\n]+\*\* \[\[[a-z0-9][a-z0-9-]*\]\]/.exec(block);
+  const prose = (firstBullet ? block.slice(0, firstBullet.index) : block).trimEnd();
+  const lines = renderRelationsLines(relations);
+  const newBlock = prose ? `${prose}\n\n${lines}` : lines;
+  return `${body.slice(0, start)}${newBlock}${body.slice(sectionEnd)}`;
+}
 
 export interface PaperBodyInput {
   essence: string;
   contributions: string[];
-  novelInsight: string;
+  /** Contrastive pair (new format) or plain prose (legacy pages). */
+  novelInsight: string | { prior: string; update: string };
   limitations: string;
   frontier: string;
   relationsContext: string;
-  relations: { relation: string; slug: string; note: string }[];
+  relations: PaperRelation[];
   /** Raw bibliography (displayed verbatim) + resolved matches (link markers). */
   citations: { rawReferences: string[]; matches: CitationRecord[] };
   /** Topic slug used in the ## Feeds section. */
@@ -23,15 +48,17 @@ export interface PaperBodyInput {
 }
 
 export function renderPaperBody(input: PaperBodyInput): string {
-  const relations =
-    input.relations.length > 0
-      ? input.relations.map((r) => `- **${r.relation}** [[${r.slug}]] — ${r.note}`).join("\n")
-      : "_No relations to existing wiki papers detected._";
+  const relations = renderRelationsLines(input.relations);
 
   const figures =
     input.figures && input.figures.length > 0
       ? `## Figures\n${input.figures.map((f) => `![${figureLabel(f.file)}](${f.url})`).join("\n")}`
       : "";
+
+  const novelInsight =
+    typeof input.novelInsight === "string"
+      ? input.novelInsight
+      : `*prior:* ${input.novelInsight.prior} / *update:* ${input.novelInsight.update}`;
 
   return `
 ## Essence
@@ -43,7 +70,7 @@ ${input.contributions.map((c) => `- ${c}`).join("\n")}
 ${figures}
 
 ## Critical Analysis
-**Novel Insight**: ${input.novelInsight}
+**Novel Insight**: ${novelInsight}
 
 **Fundamental Limitations**: ${input.limitations}
 

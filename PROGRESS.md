@@ -14,6 +14,10 @@ Latest fixes shipped:
 - ✅ **API spam fix** — `/knowledge` no longer loops `GET /api/knowledge` (terminal-status effect now keys on status string, not object identity); stale "running" knowledge snapshots surface as failed via `readEffectiveKnowledgeStatus` in both the page and the API.
 - ✅ **Favorites / compile wipe** — `favorite: true` in `knowledge/articles/` frontmatter; compile wipes previously compiled articles except favorites; star toggles on `/knowledge` and article pages (`PATCH /api/knowledge/articles`); SCHEMA.md updated.
 - ✅ **SCHEMA.md = LLM operating manual** — role preamble, workflows (ingest / answer / maintain / knowledge), co-evolution revision log.
+- ✅ **Reset to zero** — `/health` Danger zone, double-confirm + server token (`{ confirm: "RESET" }`): moves `papers/compiled/*.pdf` + `papers/duplicates/` back to `papers/new/`, deletes wiki pages/index/log/proposals, derived dbs, figures, `.log/`, knowledge articles/index/log; keeps SCHEMA.md, journal, pieces, comments. Journal entry per reset.
+- ✅ **AutoWiki-inspired features** — contrastive Novel Insight (`prior → update`, new compiles; legacy pages render as-is); typed relations persisted as `relations[]` frontmatter (compile writes, lint syncs from `## Relations` body + verifies slugs); citation graph renders 3 relation edge classes (temporal blue / contradicts red / impacts dashed) with legend; compile runs + failures auto-append `wiki/journal/` entries.
+- ✅ **README + docs** — AutoWiki-style README (as-shipped posture, text-only showcase); GRILL.md glossary; ADR 0003 (relations in frontmatter).
+- ✅ **Bug round 2** — reset preserves favorited knowledge articles (selective wipe); citation graph: category filter (one edge type at a time) + counts, node labels, neighborhood highlight on hover, edge tooltips with notes/references, click-to-open info panel (title/topic/year/essence/relations/cites); relations accuracy: end-of-run finalize pass re-maps typed relations against the full final index (one slim call per compiled paper, code-side validation, body patched in place).
 
 ## Quick Resume
 

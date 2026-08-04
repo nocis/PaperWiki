@@ -20,7 +20,8 @@ export interface PaperAnalysis {
   publishedAt: string; // YYYY-MM or ""
   essence: string;
   contributions: string[];
-  novelInsight: string;
+  /** Contrastive: prior = the field's received view; update = what this paper changes. */
+  novelInsight: { prior: string; update: string };
   limitations: string;
   researchFrontier: string;
   references: string[];
@@ -65,7 +66,8 @@ Part 1 — ANALYSIS. Rules:
 - essence: 3 sentences max (scope, method, insight), under 600 characters.
 - contributions: 3-6 concise deltas, each under 200 characters.
 - references: the COMPLETE bibliography — every entry verbatim as printed in the paper, no truncation. At most ${MAX_REFERENCES} entries; omit only pure noise lines (page headers, section notes).
-- novelInsight, limitations, researchFrontier, and relationsContext: under 800 characters each.
+- novelInsight: a contrastive pair — "prior" is the field's received view or assumption this paper pushes against (under 400 characters), "update" is what this paper changes about it (under 400 characters).
+- limitations, researchFrontier, and relationsContext: under 800 characters each.
 - evolutionaryChain.role: "origin" (starts a new line of work), "intermediate" (builds on predecessors), "terminal" (closes/supersedes a line), or "fork" (splits a line).
 - relationsContext: one short paragraph positioning the paper in the field's timeline (its predecessors, what it supersedes or contradicts).
 
@@ -102,7 +104,7 @@ Return JSON with exactly these fields:
   "publishedAt": "YYYY-MM or empty string",
   "essence": string,
   "contributions": string[],
-  "novelInsight": string,
+  "novelInsight": { "prior": string, "update": string },
   "limitations": string,
   "researchFrontier": string,
   "references": string[],
@@ -391,4 +393,47 @@ Rules:
     { role: "user", content: `RETRIEVED WIKI PAGES:\n\n${context}` },
     ...opts.history,
   ];
+}
+
+// ---------------------------------------------------------------------------
+// 7. Relation finalize (end-of-run: re-map typed relations against the FULL
+//    final index — the analyze pass saw only the pre-run index)
+// ---------------------------------------------------------------------------
+
+export interface RelationFinalizeResponse {
+  relations: { relation: string; slug: string; note: string }[];
+}
+
+export function relationFinalizePrompt(opts: {
+  title: string;
+  seedRelations: { relation: string; slug: string; note: string }[];
+  index: string;
+  language: string;
+}): { system: string; user: string } {
+  const seed =
+    opts.seedRelations.length > 0
+      ? opts.seedRelations
+          .map((r) => `- **${r.relation}** [[${r.slug}]] — ${r.note}`)
+          .join("\n")
+      : "(none)";
+
+  const system = `You are the maintainer of a research-paper wiki. You verify and complete the typed relations of ONE paper against the COMPLETE final wiki index.
+Rules:
+- "relation" must be exactly one of: "builds-on", "extends", "supersedes", "contradicts", "impacts".
+- "slug" may ONLY reference papers from the WIKI INDEX provided. Never invent slugs. Never reference the paper itself.
+- Start from the SEED RELATIONS (extracted when the index was partial). Keep every seed that is still accurate; correct or drop seeds that are wrong; ADD relations to papers the seed pass could not see (compiled later in the same run).
+- "builds-on" = this paper builds directly on the target; "extends" = generalizes the target's approach; "supersedes" = replaces/surpasses the target; "contradicts" = findings conflict with the target; "impacts" = relevant cross-topic influence.
+- Notes: under 200 characters, precise, in language "${opts.language}".
+- Respond with JSON only: { "relations": [ { "relation": string, "slug": string, "note": string } ] }`;
+
+  return {
+    system,
+    user: `PAPER TITLE: ${opts.title}
+
+SEED RELATIONS (from the analysis pass against a partial index):
+${seed}
+
+COMPLETE WIKI INDEX (all compiled papers):
+${opts.index || "(empty — no papers yet)"}`,
+  };
 }

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import CitationGraph from "@/components/CitationGraph";
+import CitationGraph, { type GraphPaperInfo, type GraphRelationLink } from "@/components/CitationGraph";
 import { citationCoverage, readCitationMap } from "@/lib/citations";
 import { loadDb } from "@/lib/wiki";
 
@@ -38,16 +38,46 @@ export default async function CitationsPage() {
   const slugSet = new Set(paperSlugs);
 
   const nodes = db.papers.map((p) => ({ id: p.slug, label: p.title, group: p.milestone }));
-  const links: { source: string; target: string }[] = [];
+  const links: { source: string; target: string; ref?: string }[] = [];
   for (const paper of db.papers) {
     const entry = map.papers[paper.slug];
     if (!entry) continue;
     for (const record of entry.citations) {
       if (record.matchedSlug && slugSet.has(record.matchedSlug) && record.matchedSlug !== paper.slug) {
-        links.push({ source: paper.slug, target: record.matchedSlug });
+        links.push({
+          source: paper.slug,
+          target: record.matchedSlug,
+          ref: entry.rawReferences[record.entry - 1],
+        });
       }
     }
   }
+
+  // Typed relations (frontmatter relations[]) rendered as colored edge classes:
+  // temporal (builds-on/extends/supersedes), contradicts, cross-topic impacts.
+  const RELATION_CLASS: Record<string, GraphRelationLink["kind"]> = {
+    "builds-on": "temporal",
+    extends: "temporal",
+    supersedes: "temporal",
+    contradicts: "contradicts",
+    impacts: "impacts",
+  };
+  const relationLinks: GraphRelationLink[] = [];
+  for (const paper of db.papers) {
+    for (const rel of paper.relations ?? []) {
+      const kind = RELATION_CLASS[rel.relation];
+      if (!kind || !slugSet.has(rel.slug) || rel.slug === paper.slug) continue;
+      relationLinks.push({ source: paper.slug, target: rel.slug, kind, note: rel.note });
+    }
+  }
+
+  const paperInfo: GraphPaperInfo[] = db.papers.map((p) => ({
+    slug: p.slug,
+    title: p.title,
+    publishedAt: p.publishedAt,
+    essence: p.essence,
+    milestone: p.milestone,
+  }));
 
   const citedCount = new Map<string, number>();
   for (const link of links) {
@@ -105,7 +135,7 @@ export default async function CitationsPage() {
         </p>
       ) : (
         <>
-          <CitationGraph nodes={nodes} links={links} />
+          <CitationGraph nodes={nodes} links={links} relationLinks={relationLinks} papers={paperInfo} />
           <div className="grid gap-6 lg:grid-cols-3">
             <TopList title="Most cited in the wiki" entries={mostCited} />
             <TopList title="Papers citing the most" entries={citingMost} />

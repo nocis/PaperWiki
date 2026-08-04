@@ -65,7 +65,9 @@ import {
   remapPaperCitations,
   updatePaperCitations,
 } from "../src/lib/citations";
-import { renderPaperBody, renderTopicBody } from "../src/lib/templates";
+import { renderPaperBody, renderTopicBody, patchRelationsBlock } from "../src/lib/templates";
+import { appendWikiJournal } from "../src/lib/wiki-journal";
+import { finalizePaperRelations } from "../src/lib/relations";
 import {
   finishCompileRun,
   recordCompileEvent,
@@ -463,12 +465,13 @@ async function processPdf(
     figures: figures.map((f) => f.file),
     cites,
     citedBy: [],
+    relations,
   };
 
   const paperBody = renderPaperBody({
     essence: analysis.essence,
     contributions: analysis.contributions ?? [],
-    novelInsight: analysis.novelInsight ?? "",
+    novelInsight: analysis.novelInsight,
     limitations: analysis.limitations ?? "",
     frontier: analysis.researchFrontier ?? "",
     relationsContext: analysis.relationsContext ?? "",
@@ -808,6 +811,54 @@ async function main(): Promise<void> {
     for (const s of citationStats) {
       console.log(`  citations: ${s.slug} → ${s.matched}/${s.total} linked`);
     }
+
+    // End-of-run: re-map typed relations against the FULL final index. The
+    // analyze pass saw only the pre-run index, so same-run papers are missed
+    // and stale seeds are never corrected. One slim call per compiled paper.
+    const relationStats = await runCompileStep(
+      "finalize-relations",
+      "Finalize typed relations (LLM)",
+      async () => {
+        const pages = await readPaperPages();
+        const bySlug = new Map(pages.map((p) => [p.fm.slug, p]));
+        const knownSlugs = new Set(pages.map((p) => p.fm.slug));
+        const finalIndex = pages
+          .map((p) => `- ${p.fm.slug} — "${p.fm.title}" (${p.fm.publishedAt})`)
+          .slice(0, 60)
+          .join("\n");
+        const stats: { slug: string; before: number; after: number }[] = [];
+        for (const compiledPaper of compiled) {
+          const page = bySlug.get(compiledPaper.slug);
+          const seed = page?.fm.relations ?? [];
+          if (!page || seed.length === 0) continue;
+          const finalized = await finalizePaperRelations({
+            provider,
+            model,
+            language: LANGUAGE,
+            title: page.fm.title,
+            seed,
+            index: finalIndex,
+            knownSlugs,
+            selfSlug: page.fm.slug,
+          });
+          if (JSON.stringify(finalized) !== JSON.stringify(seed)) {
+            page.fm.relations = finalized;
+            page.body = patchRelationsBlock(page.body, finalized);
+            await writePage(page.filePath, page.fm, page.body);
+            stats.push({ slug: page.fm.slug, before: seed.length, after: finalized.length });
+            await appendLog("relations", page.fm.title, [
+              `slug: ${page.fm.slug}`,
+              `relations: ${seed.length} → ${finalized.length}`,
+              `provider: ${provider.id} · model: ${model}`,
+            ]);
+          }
+        }
+        return stats;
+      }
+    );
+    for (const s of relationStats) {
+      console.log(`  relations: ${s.slug} → ${s.before} → ${s.after} finalized`);
+    }
     await updateCompileRun({
       totals: { papers: inbox.length, compiled: compiled.length, duplicates: skipped.length, failed: 0 },
     });
@@ -840,8 +891,24 @@ async function main(): Promise<void> {
     }
 
     const duplicateText = skipped.length > 0 ? `, ${skipped.length} duplicate(s) skipped` : "";
+
+    // Cognitive timeline: one dated journal entry per run.
+    const citationsTotal = citationStats.reduce((s, c) => s + c.total, 0);
+    const citationsMatched = citationStats.reduce((s, c) => s + c.matched, 0);
+    const topicsTouched = [...new Set(compiled.map((p) => p.milestone))];
+    await appendWikiJournal("compile", `Compiled ${compiled.length} paper(s)${duplicateText}`, [
+      ...(compiled.length > 0
+        ? [`papers: ${compiled.map((p) => p.slug).join(", ")}`, `topics touched: ${topicsTouched.join(", ")}`]
+        : ["papers: (none)"]),
+      `citations linked: ${citationsMatched}/${citationsTotal}`,
+      ...(proposals > 0 ? [`proposals queued: ${proposals}`] : []),
+      ...(skipped.length > 0 ? [`duplicates skipped: ${skipped.join(", ")}`] : []),
+      `provider: ${provider.id} · model: ${model}`,
+    ]);
+
     await finishCompileRun("completed", `Compiled ${compiled.length} paper(s)${duplicateText}.`);
   } catch (err) {
+    await appendWikiJournal("compile", "Compile failed", [errorMessage(err)]);
     await finishCompileRun("failed", errorMessage(err));
     throw err;
   }

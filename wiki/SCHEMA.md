@@ -108,7 +108,10 @@ critique, limitations, research frontier — claims checked against wiki truth),
 ### Paper page — `wiki/papers/<slug>.md`
 Frontmatter: `slug, title, authors[], venue, publishedAt (YYYY-MM), tags[]
 (year/YYYY-MM + venue/<name>), milestone, subtopic|null, numPages, addedAt,
-rawPath, pdfUrl, figures[], cites[], citedBy[]`.
+rawPath, pdfUrl, figures[], cites[], citedBy[], relations[]`.
+`relations[]` is the structured form of the `## Relations` body: entries
+`{ relation: builds-on|extends|supersedes|contradicts|impacts, slug, note }`
+referencing compiled papers only — lint keeps body and frontmatter in sync.
 Sections: `## Essence`, `## Contributions`, `## Figures` (markdown embeds of
 `/figures/<slug>/<file>`, when figures exist), `## Critical Analysis`
 (Novel Insight / Fundamental Limitations / Research Frontier),
@@ -116,6 +119,10 @@ Sections: `## Essence`, `## Contributions`, `## Figures` (markdown embeds of
 list verbatim, numbered as extracted by the analyze LLM; entries resolved to
 compiled papers get `→ [[slug]]`; header shows "N of M citations linked"),
 `## Feeds`.
+
+**Novel Insight is contrastive.** New compiles emit it as a `prior → update`
+pair: `prior` = the field's received view the paper pushes against, `update` =
+what the paper changes about it. Legacy pages with plain prose render as-is.
 
 ### Topic page — `wiki/topics/<slug>.md` (split-out children: `wiki/topics/<parent>/<child>.md`)
 Frontmatter: `slug, name, definition, mode (standalone|merged|split),
@@ -145,6 +152,10 @@ is worse than a small new topic.
   Prose in that language; headings, YAML keys, slugs, wikilinks stay English.
 - Slugs: kebab-case, short, conceptual. Dates: ISO (`YYYY-MM-DD`, `YYYY-MM`
   for publications). Log entries: `## [YYYY-MM-DD] <operation> | <title>`.
+- **Journal.** `wiki/journal/YYYY-MM.md` is the cognitive timeline; one dated
+  entry (`## [YYYY-MM-DD] | <operation> | <title>` + `- detail` bullets) is
+  auto-appended per compile run and per reset. The journal is a timeline, not
+  an audit trail — `wiki/log.md` stays the audit trail.
 - **Writing discipline.** Synthesis is compounding: integrate with what the
   topic already says, never restart from scratch, never drop earlier insights.
   Claims cite their provenance with `[[slug]]`; attribution matters more than
@@ -168,9 +179,11 @@ Per paper, in order:
 3. **Extract figures** (PyMuPDF, best-effort, never aborts). Co-locate with
    the archive per invariant 9.
 4. **Analyze + classify** (LLM, one merged call): derive the real title (slug
-   from it), essence, contributions as deltas, complete verbatim reference
-   list, critical analysis, relation context, and the topic assignment —
-   honoring the classification fitness check and topic granularity rules.
+   from it), essence, contributions as deltas, a contrastive Novel Insight
+   (`prior → update`), complete verbatim reference list, critical analysis,
+   relation context, and the topic assignment — honoring the classification
+   fitness check and topic granularity rules. Relations are persisted both as
+   `relations[]` frontmatter and in the `## Relations` body.
 5. **Resolve citations** (LLM): match reference entries to already-compiled
    papers only — title strongly similar AND year/authors consistent; never
    approximate. Write `cites[]`/`citedBy[]` reciprocally.
@@ -178,7 +191,13 @@ Per paper, in order:
    (compounding — see Writing discipline), write/update the topic page,
    move the PDF to `papers/compiled/`, rebuild derived files (index + db +
    citation map).
-7. **Verify** every write against invariant 7 (bidirectional links) and
+7. **Finalize relations** (LLM, end of run): one slim call per compiled paper
+   re-maps typed relations against the FULL final index — the analyze pass
+   saw only the pre-run index. Seeds are kept unless wrong, same-run papers
+   are discovered, output is validated code-side (known slugs, no self,
+   allowed types, dedupe), and the `## Relations` body block is patched in
+   place.
+8. **Verify** every write against invariant 7 (bidirectional links) and
    invariant 9 (figures).
 
 Never merge with hand edits, never edit `comments/`, never restate wiki
@@ -232,7 +251,27 @@ the Add-to-knowledge UI action — never fabricated by a compile.
    `favorite: true` ones (archived favorites are kept; a favorite carries over
    when its article is regenerated).
 
+### 5. Resetting to zero (`/health` → Danger zone)
+
+A from-zero wipe, double-confirmed by the operator and token-guarded
+(`{ confirm: "RESET" }`); refused while any pipeline run is active. The
+compiler moves every PDF in `papers/compiled/` and `papers/duplicates/` back
+to `papers/new/` as new papers, then deletes all derived artifacts: wiki
+pages + `index.md`/`log.md`/`proposals.md`, `data/wiki-db.json`,
+`data/citations/map.json`, figure dirs, `.log/` progress files, and
+knowledge articles/index/log. Kept: `wiki/SCHEMA.md`, `wiki/journal/`,
+`knowledge/pieces/`, `comments/`, and **favorited knowledge articles** (the
+same archive exemption as the compile wipe). A `wiki/journal/` entry records
+the reset.
+
 ## Revision log
+
+- `2026-08-04` — Workflow 1 gains the end-of-run relation finalize step
+  (full-index re-map); reset workflow: favorited knowledge articles are kept.
+
+- `2026-08-04` — Reset workflow (workflow 5) documented.
+- `2026-08-04` — Paper pages: `relations[]` frontmatter (typed relations),
+  contrastive Novel Insight (`prior → update`), journal convention.
 
 - `2026-08-04` — Added the Role / discipline preamble, workflows (ingest,
   answer, maintain, knowledge), and the co-evolution note. Favorites in

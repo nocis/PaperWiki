@@ -44,6 +44,7 @@ export interface LintResult {
 const WIKIKLINK_RE = /\[\[([a-z0-9][a-z0-9-]*)\]\]/gi;
 const FEEDS_MILESTONE_RE = /^milestone:\s*\[\[([^\]]+)\]\]$/m;
 const FIGURE_EMBED_RE = /!\[[^\]]*\]\(\/figures\/([a-z0-9][a-z0-9-]*)\/([a-z0-9][a-z0-9._-]*\.(?:png|jpe?g|webp))\)/gi;
+const RELATION_LINE_RE = /^- \*\*([^*\n]+)\*\* \[\[([a-z0-9][a-z0-9-]*)\]\] — (.*)$/gm;
 
 export interface LintContext {
   paperPages: PaperPage[];
@@ -140,6 +141,16 @@ async function pruneBrokenFigures(paper: PaperPage): Promise<string | null> {
   paper.fm.figures = good;
   await writePage(paper.filePath, paper.fm, paper.body);
   return `pruned missing figure references (${missing.join(", ")}) of ${paper.fm.slug}`;
+}
+
+/** Parse `- **relation** [[slug]] — note` lines from the ## Relations body. */
+function parseBodyRelations(body: string): { relation: string; slug: string; note: string }[] {
+  const out: { relation: string; slug: string; note: string }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = RELATION_LINE_RE.exec(body)) !== null) {
+    out.push({ relation: m[1].trim(), slug: m[2], note: m[3].trim() });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +274,56 @@ export async function runLint(opts: { applyFixes?: boolean; queueProposals?: boo
       };
       if (applyFixes) {
         await fixCitationReciprocity(paper, ctx.paperPages);
+        fixed.push(issue);
+      } else {
+        issues.push(issue);
+      }
+    }
+  }
+
+  // --- Relations ↔ frontmatter sync --------------------------------------------
+  // The ## Relations body is authoritative for legacy pages (compiled before
+  // relations[] existed in frontmatter). Sync the frontmatter, verify slugs.
+  for (const paper of ctx.paperPages) {
+    const bodyRelations = parseBodyRelations(paper.body)
+      .filter((r) => paperSlugs.has(r.slug))
+      .filter(
+        (r, i, arr) =>
+          arr.findIndex((x) => x.relation === r.relation && x.slug === r.slug && x.note === r.note) === i
+      );
+    const fmRelations = (paper.fm.relations ?? []).map((r) => ({
+      relation: String(r.relation ?? ""),
+      slug: String(r.slug ?? ""),
+      note: String(r.note ?? ""),
+    }));
+    if (bodyRelations.length > 0 && JSON.stringify(bodyRelations) !== JSON.stringify(fmRelations)) {
+      const issue: LintIssue = {
+        severity: "warning",
+        kind: "relations-body-drift",
+        target: paper.fm.slug,
+        message: `frontmatter relations[] differs from ## Relations body (${fmRelations.length} in frontmatter, ${bodyRelations.length} in body)`,
+        autoFixable: true,
+      };
+      if (applyFixes) {
+        paper.fm.relations = bodyRelations;
+        await writePage(paper.filePath, paper.fm, paper.body);
+        fixed.push(issue);
+      } else {
+        issues.push(issue);
+      }
+    }
+    const unknown = (paper.fm.relations ?? []).filter((r) => !paperSlugs.has(r.slug));
+    if (unknown.length > 0) {
+      const issue: LintIssue = {
+        severity: "error",
+        kind: "unknown-relation",
+        target: paper.fm.slug,
+        message: `relations[] reference unknown paper(s): ${unknown.map((r) => r.slug).join(", ")}`,
+        autoFixable: true,
+      };
+      if (applyFixes) {
+        paper.fm.relations = (paper.fm.relations ?? []).filter((r) => paperSlugs.has(r.slug));
+        await writePage(paper.filePath, paper.fm, paper.body);
         fixed.push(issue);
       } else {
         issues.push(issue);

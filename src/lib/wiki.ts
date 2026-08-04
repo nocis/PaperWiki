@@ -48,6 +48,12 @@ export async function ensureDirs(): Promise<void> {
 
 export type TopicMode = "standalone" | "merged" | "split";
 
+export interface PaperRelation {
+  relation: string; // builds-on | extends | supersedes | contradicts | impacts
+  slug: string; // target paper slug
+  note: string;
+}
+
 export interface PaperFrontmatter {
   slug: string;
   title: string;
@@ -64,6 +70,8 @@ export interface PaperFrontmatter {
   figures: string[]; // extracted figure filenames, e.g. ["figure_1.png"]
   cites: string[]; // paper slugs
   citedBy: string[]; // paper slugs
+  /** Typed temporal/cross-topic relations to compiled papers. */
+  relations: PaperRelation[];
 }
 
 export interface TopicFrontmatter {
@@ -106,6 +114,7 @@ export interface DbPaper {
   figures: string[]; // figure filenames, derived from frontmatter
   cites: string[];
   citedBy: string[];
+  relations: PaperRelation[];
 }
 
 export interface DbTopic {
@@ -337,6 +346,7 @@ export async function deriveDb(): Promise<WikiDb> {
     figures: p.fm.figures ?? [],
     cites: p.fm.cites,
     citedBy: p.fm.citedBy,
+    relations: p.fm.relations ?? [],
   }));
 
   const db: WikiDb = {

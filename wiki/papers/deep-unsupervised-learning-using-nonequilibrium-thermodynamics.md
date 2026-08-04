@@ -6,14 +6,11 @@ authors:
   - Eric A. Weiss
   - Niru Maheswaranathan
   - Surya Ganguli
-venue: >-
-  Proceedings of the 32nd International Conference on Machine Learning (ICML
-  2015), JMLR: W&CP volume 37
+venue: 'ICML 2015 (JMLR: W&CP volume 37)'
 publishedAt: 2015-07
 tags:
   - year/2015-07
-  - >-
-    venue/Proceedings-of-the-32nd-International-Conference-on-Machine-Learning-(ICML-2015),-JMLR:-W&CP-volume-37
+  - 'venue/ICML-2015-(JMLR:-W&CP-volume-37)'
 milestone: diffusion-probabilistic-models
 subtopic: null
 numPages: 18
@@ -39,17 +36,17 @@ cites: []
 citedBy:
   - denoising-diffusion-implicit-models
   - denoising-diffusion-probabilistic-models
+relations: []
 ---
 ## Essence
-Introduces diffusion probabilistic models, a family of deep generative models inspired by nonequilibrium thermodynamics. A fixed forward Markov chain gradually destroys data structure into a tractable Gaussian or binomial distribution, while a learned reverse chain restores it, yielding a model that is flexible yet exactly sampleable, efficiently trainable via a log-likelihood lower bound, and easy to multiply with other distributions for posterior inference. Demonstrated on swiss roll, binary heartbeat, MNIST, CIFAR-10, bark, and dead leaves images.
+Introduces diffusion probabilistic models, a class of deep generative models inspired by nonequilibrium thermodynamics. A forward Markov chain gradually corrupts data into simple noise; a learned reverse chain restores structure, defining a highly flexible distribution that remains exactly sampleable and analytically tractable. Training maximizes a lower bound on log likelihood, reducing density estimation to regression on per-time-step diffusion kernel parameters; demonstrated on toy, binary, and image datasets including state-of-the-art dead leaves likelihood.
 
 ## Contributions
-- Defines generative models as the endpoint of a learned reverse diffusion process, enabling extreme flexibility with tractable probability evaluation, exact sampling, and posterior multiplication.
-- Derives a Jensen lower bound on log-likelihood that reduces density estimation to regression of per-step mean/covariance or bit-flip functions.
-- Shows Gaussian and binomial diffusion reversals have the same functional form, allowing training of models with thousands of time steps.
-- Introduces a method to multiply a trained diffusion distribution by arbitrary second distributions, enabling denoising and inpainting via posterior sampling.
-- Provides analytic upper and lower entropy bounds on reverse steps and a differentiable training bound, including learning the Gaussian diffusion schedule via frozen noise.
-- Achieves state-of-the-art dead leaves log-likelihood and competitive MNIST/CIFAR-10 results, with an open-source reference implementation.
+- Introduces diffusion probabilistic models, defining a generative distribution as the endpoint of a learned reverse Markov chain from noise to data.
+- Frames training as maximizing a Jensen lower bound on log likelihood, reducing density estimation to regression over per-step kernel parameters.
+- Enables exact sampling, cheap log-likelihood evaluation, and easy multiplication with arbitrary distributions for posterior computation (denoising/inpainting).
+- Demonstrates models with thousands of time steps/layers on swiss roll, binary sequences, MNIST, CIFAR-10, bark, and dead leaves.
+- Derives analytic upper/lower bounds on the entropy of each reverse step and learns the forward diffusion schedule via gradient ascent.
 
 ## Figures
 ![Figure 1](/figures/deep-unsupervised-learning-using-nonequilibrium-thermodynamics/figure_1.png)
@@ -67,14 +64,14 @@ Introduces diffusion probabilistic models, a family of deep generative models in
 ![Page 1](/figures/deep-unsupervised-learning-using-nonequilibrium-thermodynamics/page_1.png)
 
 ## Critical Analysis
-**Novel Insight**: The central conceptual leap is to treat the probabilistic model not as a single intractable potential, but as the finite-time reversal of a deliberately chosen, slowly destructive forward diffusion. Because each small diffusion step is analytically tractable and its reverse has the same functional form, the full trajectory's probability can be evaluated cheaply, the model can be trained by regressing local perturbations, and conditioning only requires weighting each step by a slowly varying factor. This reframes generative modeling as learning to undo a thermodynamic arrow of time.
+**Novel Insight**: *prior:* Probabilistic models face a fundamental tradeoff between tractability and flexibility: simple distributions are analytically convenient but inexpressive, while flexible energy-based or latent-variable models require expensive Monte Carlo, approximate inference, or restricted architectures. / *update:* Repeatedly destroying structure with a fixed forward diffusion and learning its reversal yields a deep generative model that is simultaneously flexible, exactly sampleable, cheaply evaluable, and easily multiplied with other distributions, reducing learning to regression on per-step kernel parameters.
 
-**Fundamental Limitations**: The lower bound K is only tight in the quasi-static limit of infinitesimal diffusion rate; practical finite-time chains yield a bound rather than exact likelihood. Gradient-based learning of the diffusion schedule is only straightforward for Gaussian diffusion; binomial diffusion uses a fixed annealing schedule due to discrete states. Likelihood comparisons on MNIST rely on Parzen-window estimates, and the entropy bounds require unit-variance data. Thousands of steps make sampling and training computationally heavy, and extension to high-resolution images is not demonstrated.
+**Fundamental Limitations**: The log-likelihood bound is only a lower bound, tight only in the quasi-static limit. Binomial diffusion cannot use gradient-based beta learning due to the discrete state space; a fixed schedule is used instead. MNIST likelihoods rely on Parzen-window estimates. The method uses thousands of time steps, implying high sampling and training cost. Multiplication with an external distribution is exact only for smooth r or closed-form cases; the CIFAR-10 comparison required dequantization to avoid exploiting pixel quantization.
 
-**Research Frontier**: This paper opens the diffusion probabilistic model line: subsequent work scales these models to high-resolution image synthesis, connects them to score matching and stochastic differential equations, improves noise schedules, and adds guidance and conditional generation. Its framework also invites theoretical analysis of forward/reverse processes, exact likelihood estimation via thermodynamic integration, and applications in inverse problems such as denoising, inpainting, and super-resolution.
+**Research Frontier**: Opens the question of how to scale diffusion models to larger, higher-resolution datasets and improve likelihood bounds. Subsequent work could replace hand-specified Gaussian/binomial kernels, learn diffusion schedules more flexibly, accelerate sampling, and connect reverse chains to amortized latent-variable inference. The physical framing (quasi-static processes, entropy bounds) also suggests new design principles for generative modeling.
 
 ## Relations
-Written in a landscape dominated by variational autoencoders, GSNs, NADEs, and GANs, this paper deliberately borrows annealed importance sampling and Jarzynski's equality from nonequilibrium statistical physics rather than variational Bayesian inference. It positions itself as restoring the tractability-flexibility balance: unlike wake-sleep/variational methods, the inference process is fixed to the forward diffusion, enabling thousands of layers; unlike GSNs, probabilities can be evaluated and the model readily multiplied with conditioning distributions. The paper thereby supersedes the need for expensive MCMC normalization in a wide class of deep generative models and initiates the diffusion-based approach.
+Standing between variational autoencoders and autoregressive/energy-based alternatives, this paper reframes generative modeling as learning the reversal of a fixed forward diffusion. It builds on annealed importance sampling and nonequilibrium physics rather than variational Bayesian methods, and contrasts with GSNs, NADEs, and GANs. With no existing wiki entries, it serves as the origin of the diffusion probabilistic model line.
 
 _No relations to existing wiki papers detected._
 
@@ -98,7 +95,7 @@ _0 of 56 citations linked to compiled papers._
 15. Gregor, K., Danihelka, I., Mnih, A., Blundell, C., and Wierstra, D. Deep AutoRegressive Networks. arXiv preprint arXiv:1310.8499, October 2013.
 16. Grosse, R. B., Maddison, C. J., and Salakhutdinov, R. Annealing between distributions by averaging moments. In Advances in Neural Information Processing Systems, pp. 2769–2777, 2013.
 17. Hinton, G. E. Training products of experts by minimizing contrastive divergence. Neural Computation, 14(8):1771–1800, 2002.
-18. Hinton, G. E. The wake-sleep algorithm for unsupervised neural networks). Science, 1995.
+18. Hinton, G. E. The wake-sleep algorithm for unsupervised neural networks ). Science, 1995.
 19. Hyvärinen, A. Estimation of non-normalized statistical models using score matching. Journal of Machine Learning Research, 6:695–709, 2005.
 20. Jarzynski, C. Equilibrium free-energy differences from nonequilibrium measurements: A master-equation approach. Physical Review E, January 1997.
 21. Jarzynski, C. Equalities and inequalities: irreversibility and the second law of thermodynamics at the nanoscale. Annu. Rev. Condens. Matter Phys., 2011.

@@ -11,6 +11,8 @@ Ask the questions one at a time, waiting for feedback on each question before co
 
 If a question can be answered by exploring the codebase, explore the codebase instead.
 
+Use the opencode question tool with multiple choice options for the grill interview.
+
 </what-to-do>
 
 <supporting-info>

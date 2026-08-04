@@ -5,11 +5,11 @@ authors:
   - Jiaming Song
   - Chenlin Meng
   - Stefano Ermon
-venue: ICLR 2021 (International Conference on Learning Representations)
+venue: ICLR 2021
 publishedAt: 2021-05
 tags:
   - year/2021-05
-  - venue/ICLR-2021-(International-Conference-on-Learning-Representations)
+  - venue/ICLR-2021
 milestone: diffusion-probabilistic-models
 subtopic: null
 numPages: 22
@@ -34,16 +34,24 @@ cites:
   - deep-unsupervised-learning-using-nonequilibrium-thermodynamics
   - denoising-diffusion-probabilistic-models
 citedBy: []
+relations:
+  - relation: builds-on
+    slug: deep-unsupervised-learning-using-nonequilibrium-thermodynamics
+    note: >-
+      Generalizes the Markovian diffusion forward process introduced there to a
+      family of non-Markovian processes with the same surrogate training
+      objective.
 ---
 ## Essence
-DDIMs generalize denoising diffusion probabilistic models (DDPMs) by replacing the Markovian forward process with a family of non-Markovian processes that share the same marginals and thus the same training objective. Setting the added noise to zero yields a deterministic implicit generative model that can be sampled along shortened subsequences of the original timesteps. This gives 10-50x faster sampling from a pretrained DDPM, as well as latent-space interpolation and near-lossless encoding via an ODE-like reverse process.
+DDIMs generalize DDPMs to a family of non-Markovian forward processes that share the same training objective. By choosing a deterministic generative process (σ→0), they produce high-quality samples 10–50× faster, enable semantically meaningful latent-space interpolation, and allow near-lossless reconstruction via an ODE-like sampling procedure. The paper unifies DDPM and score-based sampling under a variational inference perspective.
 
 ## Contributions
-- Generalizes DDPM to a family of non-Markovian forward processes whose variational objectives are equivalent to the standard DDPM training loss (Theorem 1).
-- Introduces DDIM, a deterministic implicit probabilistic model obtained by zero noise, enabling generation directly from latent variables.
-- Shows how to sample from any subsequence of timesteps, trading computation for quality without retraining.
-- Connects deterministic sampling to Euler integration of an ODE, equivalent to a special probability-flow ODE of score-based SDEs.
-- Demonstrates 10-50x wall-clock speedups, semantically meaningful latent interpolation, and low-error reconstruction from latent codes.
+- Shows the DDPM objective depends only on marginals q(x_t|x_0), not the joint, enabling non-Markovian forward processes.
+- Derives a unified variational objective equivalent to DDPM's L_1, reusing pretrained DDPM models without retraining.
+- Introduces DDIM, a deterministic implicit generative process (σ=0) from the same network, yielding 10–50× faster sampling.
+- Demonstrates sample consistency across trajectories, enabling semantically meaningful interpolation in latent space.
+- Connects DDIM sampling to Euler integration of an ODE, allowing approximate deterministic encoding/reconstruction.
+- Empirically shows DDIM outperforms DDPM when using few sampling steps (10-100) on CIFAR10 and CelebA.
 
 ## Figures
 ![Figure 1](/figures/denoising-diffusion-implicit-models/figure_1.png)
@@ -61,16 +69,16 @@ DDIMs generalize denoising diffusion probabilistic models (DDPMs) by replacing t
 ![Page 1](/figures/denoising-diffusion-implicit-models/page_1.png)
 
 ## Critical Analysis
-**Novel Insight**: The DDPM training objective depends only on the marginal q(xt|x0), not the full joint, so the inference process can be made non-Markovian without retraining. In the zero-noise limit, the generative process becomes deterministic and behaves like Euler integration of an ODE, giving diffusion models a latent space with interpolation and encoding properties similar to GANs and neural ODEs.
+**Novel Insight**: *prior:* Diffusion models require simulating the full reverse Markov chain with thousands of steps because the generative process must approximate the reverse of the original forward diffusion; stochasticity makes latent variables uninformative and sampling slow. / *update:* The DDPM objective only constrains marginals, so we can choose non-Markovian (even deterministic) processes with the same training objective; this yields fast sampling, consistent latent encodings, interpolation, and near-perfect reconstruction.
 
-**Fundamental Limitations**: The deterministic DDIM sampler is slightly worse in FID than the full 1000-step stochastic DDPM when using all steps with the larger variance schedule; the zero-noise case is an approximation not strictly covered by the variational equivalence theorem; very short sampling trajectories still degrade quality; reconstruction error grows as fewer steps are used; experiments are limited to image datasets and heuristic variance schedules.
+**Fundamental Limitations**: DDIM's deterministic sampling slightly underperforms full-step DDPM in the 1000-step regime (FID 4.04 vs 3.17 on CIFAR10). The non-Markovian construction is shown for Gaussian processes; extensions to other structures are only sketched. Speed-quality trade-off requires choosing trajectory length τ and stochasticity σ per application. Reconstruction uses the ODE approximation and may not be exact. Scalability to larger images/datasets is only tested on bedroom/church qualitatively.
 
-**Research Frontier**: Subsequent work built on fast deterministic diffusion sampling via dedicated ODE solvers, distillation, and consistency models, and the ODE view unified diffusion models with score-based SDEs and neural ODEs. The non-Markovian perspective also invites non-Gaussian and combinatorial forward processes, as well as higher-order multi-step ODE solvers for further speedups.
+**Research Frontier**: After DDIM, the field moved to continuous-time SDE/ODE formulations (score SDEs), deterministic sampling schedules, distillation of diffusion steps, and latent diffusion models. Key open problems include reducing discretization error with higher-order ODE solvers, exact invertibility for compression, and extending non-Markovian views to discrete/combinatorial data.
 
 ## Relations
-The paper builds directly on diffusion probabilistic models from Sohl-Dickstein et al. and the DDPM training objective popularized by Ho et al., which require simulating a long Markov chain to generate samples. By observing that the objective depends only on marginals q(xt|x0), it generalizes to non-Markovian forward processes and constructs deterministic generative trajectories that behave like implicit models and neural ODEs. This opens accelerated sampling, latent-space interpolation, and latent encoding, and it complements concurrent score-based SDE work by providing a simpler variational route to a probability-flow ODE.
+DDIM builds directly on the diffusion probabilistic models introduced by Sohl-Dickstein et al. (2015) and popularized by Ho et al. (2020), sharing the same L_1 training objective. It also connects to score-based generative models (Song & Ermon 2019, 2020) and the concurrent probability-flow ODE of Song et al. (2020), positioning itself as a bridge between Markov-chain diffusion sampling and deterministic implicit models.
 
-- **extends** [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]] — Generalizes the diffusion probabilistic model framework to non-Markovian forward processes while preserving the same denoising objective.
+- **builds-on** [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]] — Generalizes the Markovian diffusion forward process introduced there to a family of non-Markovian processes with the same surrogate training objective.
 
 ## Citations
 _2 of 41 citations linked to compiled papers._
