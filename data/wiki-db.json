@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "updatedAt": "2026-08-04T19:05:06.940Z",
+  "topics": [
+    {
+      "slug": "diffusion-probabilistic-models",
+      "name": "Diffusion Probabilistic Models",
+      "definition": "Generative models that define a data distribution as the endpoint of a learned reverse diffusion process, which gradually denoises a simple prior distribution into structured data. The framework originally uses a Markov chain, but can be generalized to non-Markovian forward processes, enabling tractable sampling, likelihood evaluation, and posterior inference.",
+      "mode": "standalone",
+      "parentSlug": null,
+      "children": [],
+      "subtopics": [],
+      "tags": [
+        "generative-models",
+        "unsupervised-learning",
+        "markov-chains",
+        "deep-learning",
+        "thermodynamics"
+      ],
+      "sources": [
+        "deep-unsupervised-learning-using-nonequilibrium-thermodynamics",
+        "denoising-diffusion-implicit-models",
+        "denoising-diffusion-probabilistic-models"
+      ],
+      "path": "topics/diffusion-probabilistic-models.md"
+    }
+  ],
+  "papers": [
+    {
+      "slug": "deep-unsupervised-learning-using-nonequilibrium-thermodynamics",
+      "title": "Deep Unsupervised Learning using Nonequilibrium Thermodynamics",
+      "authors": [
+        "Jascha Sohl-Dickstein",
+        "Eric A. Weiss",
+        "Niru Maheswaranathan",
+        "Surya Ganguli"
+      ],
+      "venue": "Proceedings of the 32nd International Conference on Machine Learning (ICML 2015), JMLR: W&CP volume 37",
+      "publishedAt": "2015-07",
+      "tags": [
+        "year/2015-07",
+        "venue/Proceedings-of-the-32nd-International-Conference-on-Machine-Learning-(ICML-2015),-JMLR:-W&CP-volume-37"
+      ],
+      "milestone": "diffusion-probabilistic-models",
+      "subtopic": null,
+      "numPages": 18,
+      "addedAt": "2026-08-04",
+      "url": "/pdfs/deep-unsupervised-learning-using-nonequilibrium-thermodynamics.pdf",
+      "essence": "Introduces diffusion probabilistic models, a family of deep generative models inspired by nonequilibrium thermodynamics. A fixed forward Markov chain gradually destroys data structure into a tractable Gaussian or binomial distribution, while a learned reverse chain restores it, yielding a model that is flexible yet exactly sampleable, efficiently trainable via a log-likelihood lower bound, and easy to multiply with other distributions for posterior inference. Demonstrated on swiss roll, binary heartbeat, MNIST, CIFAR-10, bark, and dead leaves images.",
+      "figures": [
+        "figure_1.png",
+        "figure_10.png",
+        "figure_11.png",
+        "figure_12.png",
+        "figure_2.png",
+        "figure_3.png",
+        "figure_4.png",
+        "figure_5.png",
+        "figure_6.png",
+        "figure_7.png",
+        "figure_8.png",
+        "figure_9.png",
+        "page_1.png"
+      ],
+      "cites": [],
+      "citedBy": []
+    },
+    {
+      "slug": "denoising-diffusion-implicit-models",
+      "title": "Denoising Diffusion Implicit Models",
+      "authors": [
+        "Jiaming Song",
+        "Chenlin Meng",
+        "Stefano Ermon"
+      ],
+      "venue": "ICLR 2021 (International Conference on Learning Representations)",
+      "publishedAt": "2021-05",
+      "tags": [
+        "year/2021-05",
+        "venue/ICLR-2021-(International-Conference-on-Learning-Representations)"
+      ],
+      "milestone": "diffusion-probabilistic-models",
+      "subtopic": null,
+      "numPages": 22,
+      "addedAt": "2026-08-04",
+      "url": "/pdfs/denoising-diffusion-implicit-models.pdf",
+      "essence": "DDIMs generalize denoising diffusion probabilistic models (DDPMs) by replacing the Markovian forward process with a family of non-Markovian processes that share the same marginals and thus the same training objective. Setting the added noise to zero yields a deterministic implicit generative model that can be sampled along shortened subsequences of the original timesteps. This gives 10-50x faster sampling from a pretrained DDPM, as well as latent-space interpolation and near-lossless encoding via an ODE-like reverse process.",
+      "figures": [
+        "figure_1.png",
+        "figure_10.png",
+        "figure_11.png",
+        "figure_12.png",
+        "figure_2.png",
+        "figure_3.png",
+        "figure_4.png",
+        "figure_5.png",
+        "figure_6.png",
+        "figure_7.png",
+        "figure_8.png",
+        "figure_9.png",
+        "page_1.png"
+      ],
+      "cites": [],
+      "citedBy": []
+    },
+    {
+      "slug": "denoising-diffusion-probabilistic-models",
+      "title": "Denoising Diffusion Probabilistic Models",
+      "authors": [
+        "Jonathan Ho",
+        "Ajay Jain",
+        "Pieter Abbeel"
+      ],
+      "venue": "34th Conference on Neural Information Processing Systems (NeurIPS 2020)",
+      "publishedAt": "2020-12",
+      "tags": [
+        "year/2020-12",
+        "venue/34th-Conference-on-Neural-Information-Processing-Systems-(NeurIPS-2020)"
+      ],
+      "milestone": "diffusion-probabilistic-models",
+      "subtopic": null,
+      "numPages": 25,
+      "addedAt": "2026-08-04",
+      "url": "/pdfs/denoising-diffusion-probabilistic-models.pdf",
+      "essence": "Diffusion probabilistic models are latent variable models with a fixed forward noising Markov chain and a learned reverse denoising chain. We show that a weighted variational bound, with an epsilon-prediction parameterization and a simplified objective, connects diffusion models to denoising score matching and annealed Langevin dynamics. This yields state-of-the-art FID on CIFAR-10 and high-quality samples on LSUN and CelebA-HQ, plus a progressive lossy compression interpretation.",
+      "figures": [
+        "figure_1.png",
+        "figure_10.png",
+        "figure_11.png",
+        "figure_12.png",
+        "figure_2.png",
+        "figure_3.png",
+        "figure_4.png",
+        "figure_5.png",
+        "figure_6.png",
+        "figure_7.png",
+        "figure_8.png",
+        "figure_9.png",
+        "page_1.png"
+      ],
+      "cites": [],
+      "citedBy": []
+    }
+  ],
+  "proposals": []
+}

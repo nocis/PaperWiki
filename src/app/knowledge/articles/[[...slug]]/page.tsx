@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import matter from "gray-matter";
 import WikiMarkdown from "@/components/WikiMarkdown";
+import ArticleFavoriteButton from "@/components/ArticleFavoriteButton";
 import { KNOWLEDGE_ARTICLES_DIR, deriveKnowledgeDb } from "@/lib/knowledge";
 import { loadDb } from "@/lib/wiki";
 
@@ -24,7 +25,7 @@ export default async function KnowledgeArticlePage({ params }: { params: { slug?
     notFound();
   }
   const parsed = matter(source);
-  const data = parsed.data as { title?: string; pieceSlugs?: string[]; paperSlugs?: string[]; relatedArticles?: string[] };
+  const data = parsed.data as { title?: string; pieceSlugs?: string[]; paperSlugs?: string[]; relatedArticles?: string[]; favorite?: boolean };
   const title = data.title ?? slug;
   const pieceSlugs = Array.isArray(data.pieceSlugs) ? data.pieceSlugs : [];
   const paperSlugs = Array.isArray(data.paperSlugs) ? data.paperSlugs : [];
@@ -35,9 +36,12 @@ export default async function KnowledgeArticlePage({ params }: { params: { slug?
         <Link href="/knowledge" className="text-sm text-gray-500 hover:text-gray-900">
           ← Your Knowledge
         </Link>
-        <span className="rounded-full bg-violet-50 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-violet-700">
-          Topic article · derived
-        </span>
+        <div className="flex items-center gap-3">
+          <ArticleFavoriteButton slug={slug} initialFavorite={data.favorite === true} />
+          <span className="rounded-full bg-violet-50 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-violet-700">
+            Topic article · derived
+          </span>
+        </div>
       </div>
 
       <header className="mt-4 border-b border-gray-200 pb-6">

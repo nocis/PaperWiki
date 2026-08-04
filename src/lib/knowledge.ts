@@ -62,6 +62,8 @@ export interface KnowledgeArticleFrontmatter {
   pieceSlugs: string[];
   paperSlugs: string[];
   relatedArticles: string[];
+  /** User favorite — exempts the article from the compile wipe (archived). */
+  favorite?: boolean;
 }
 
 export interface KnowledgeArticle {
@@ -94,6 +96,7 @@ export interface KnowledgeDb {
     pieceCount: number;
     paperCount: number;
     relatedArticles: string[];
+    favorite: boolean;
   }[];
 }
 
@@ -199,6 +202,7 @@ export async function deriveKnowledgeDb(): Promise<KnowledgeDb> {
       pieceCount: a.fm.pieceSlugs.length,
       paperCount: a.fm.paperSlugs.length,
       relatedArticles: a.fm.relatedArticles ?? [],
+      favorite: a.fm.favorite === true,
     })),
   };
   return db;

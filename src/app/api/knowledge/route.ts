@@ -8,7 +8,7 @@ import {
   updatePiece,
   writePiece,
 } from "@/lib/knowledge";
-import { readKnowledgeStatus } from "@/lib/runs";
+import { readEffectiveKnowledgeStatus } from "@/lib/runs";
 import { loadDb } from "@/lib/wiki";
 
 export const runtime = "nodejs";
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
     if (!piece) return bad("piece not found", 404);
     return NextResponse.json({ piece: { ...piece.fm, content: piece.body } });
   }
-  const [db, wikiDb, runStatus] = await Promise.all([deriveKnowledgeDb(), loadDb(), readKnowledgeStatus()]);
+  const [db, wikiDb, runStatus] = await Promise.all([deriveKnowledgeDb(), loadDb(), readEffectiveKnowledgeStatus()]);
   const stale =
     db.compiledAt !== null &&
     (db.wikiUpdatedAt !== null &&

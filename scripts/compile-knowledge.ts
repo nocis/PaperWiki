@@ -21,6 +21,7 @@ import {
   ensureKnowledgeDirs,
   appendKnowledgeLog,
   deriveKnowledgeDb,
+  readArticles,
   readPieces,
 
   regenKnowledgeIndex,
@@ -198,6 +199,13 @@ async function main(): Promise<void> {
     const papersText = papersIndexText(wikiDb.papers);
     const topicsText = topicsTreeText(wikiDb.topics);
 
+    // Favorites are archived: they survive the wipe below, and a re-generated
+    // article keeps its favorite flag.
+    const existingArticles = await readArticles();
+    const existingFavoriteSlugs = new Set(
+      existingArticles.filter((a) => a.fm.favorite === true).map((a) => a.fm.slug)
+    );
+
     // --- LLM 2 per article: synthesize + review --------------------------------
     const compiledAt = new Date().toISOString();
     for (let i = 0; i < cluster.length; i++) {
@@ -253,6 +261,7 @@ async function main(): Promise<void> {
           pieceSlugs: article.pieceSlugs,
           paperSlugs: article.paperSlugs,
           relatedArticles: article.relatedArticleSlugs ?? [],
+          ...(existingFavoriteSlugs.has(article.slug) ? { favorite: true } : {}),
         };
         const body = renderKnowledgeArticleBody({
           definition: response.definition || article.definition,
@@ -289,15 +298,37 @@ async function main(): Promise<void> {
       }
     }
 
+    // --- Wipe previously compiled articles (favorites kept) -------------------
+    const writtenSlugs = new Set(cluster.map((a) => a.slug));
+    const candidates = existingArticles.filter(
+      (a) => !writtenSlugs.has(a.fm.slug) && a.fm.favorite !== true
+    );
+    const removed: string[] = [];
+    if (candidates.length > 0) {
+      await recordKnowledgeEventStep(
+        "wipe-stale-articles",
+        `Wipe stale compiled articles (${candidates.length}) — favorites kept`,
+        async () => {
+          for (const a of candidates) {
+            await fs.rm(a.filePath, { force: true });
+            removed.push(a.fm.slug);
+          }
+        }
+      );
+      console.log(`Wiped ${removed.length} stale article(s): ${removed.join(", ")}`);
+    }
+
     // --- Derived files -----------------------------------------------------------
     await recordKnowledgeEventStep("rebuild-derived", "Rebuild knowledge index and database", async () => {
       const db = await deriveKnowledgeDb();
       await regenKnowledgeIndex(db, wikiDb);
 
-      await appendKnowledgeLog("knowledge-compile", `Compiled ${cluster.length} topic article(s) from ${pieces.length} piece(s)`, [
+      const details = [
         `articles: ${cluster.map((a) => a.slug).join(", ")}`,
         `provider: ${provider.id} · model: ${model}`,
-      ]);
+      ];
+      if (removed.length > 0) details.push(`wiped stale: ${removed.join(", ")}`);
+      await appendKnowledgeLog("knowledge-compile", `Compiled ${cluster.length} topic article(s) from ${pieces.length} piece(s)`, details);
     });
 
     await finishKnowledgeRun("completed", `Compiled ${cluster.length} article(s) from ${pieces.length} piece(s).`);

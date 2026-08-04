@@ -1,11 +1,13 @@
 import Link from "next/link";
 import KnowledgeDashboard from "@/components/KnowledgeDashboard";
-import { readKnowledgeStatus } from "@/lib/runs";
+import { readEffectiveKnowledgeStatus } from "@/lib/runs";
 import { deriveKnowledgeDb } from "@/lib/knowledge";
 import { loadDb } from "@/lib/wiki";
 
+export const dynamic = "force-dynamic";
+
 export default async function KnowledgePage() {
-  const [db, wikiDb, runStatus] = await Promise.all([deriveKnowledgeDb(), loadDb(), readKnowledgeStatus()]);
+  const [db, wikiDb, runStatus] = await Promise.all([deriveKnowledgeDb(), loadDb(), readEffectiveKnowledgeStatus()]);
   const stale =
     db.compiledAt !== null &&
     ((db.wikiUpdatedAt !== null &&

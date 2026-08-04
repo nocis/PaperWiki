@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useLlmPrefs } from "@/components/LlmPrefsProvider";
 import { availabilityMessage } from "@/lib/llm-availability";
 
@@ -25,6 +26,7 @@ interface KnowledgeArticle {
   pieceCount: number;
   paperCount: number;
   relatedArticles: string[];
+  favorite: boolean;
 }
 
 interface KnowledgeDbPayload {
@@ -73,6 +75,7 @@ export default function KnowledgeDashboard({
   const [polling, setPolling] = useState(initialRunStatus?.status === "running");
   const [requestError, setRequestError] = useState<string | null>(null);
   const { prefs, availability, availabilityState, checkNow } = useLlmPrefs();
+  const router = useRouter();
 
   const prefsUnresolved = !prefs.provider || !prefs.model;
   const llmBlocked =
@@ -106,12 +109,13 @@ export default function KnowledgeDashboard({
     return () => window.clearInterval(interval);
   }, [polling, refresh]);
 
+  const runTerminal = runStatus?.status === "completed" || runStatus?.status === "failed";
+
   useEffect(() => {
-    if (runStatus?.status === "completed" || runStatus?.status === "failed") {
-      setPolling(false);
-      void refresh();
-    }
-  }, [runStatus, refresh]);
+    if (!runTerminal) return;
+    setPolling(false);
+    void refresh();
+  }, [runTerminal, refresh]);
 
   async function compileKnowledge() {
     setRequestError(null);
@@ -149,6 +153,23 @@ export default function KnowledgeDashboard({
       await refresh();
     } catch (err) {
       setRequestError(err instanceof Error ? err.message : "delete failed");
+    }
+  }
+
+  async function toggleFavorite(article: KnowledgeArticle) {
+    setRequestError(null);
+    try {
+      const res = await fetch("/api/knowledge/articles", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ slug: article.slug, favorite: !article.favorite }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? `update failed with HTTP ${res.status}`);
+      await refresh();
+      router.refresh();
+    } catch (err) {
+      setRequestError(err instanceof Error ? err.message : "update failed");
     }
   }
 
@@ -319,7 +340,8 @@ export default function KnowledgeDashboard({
         <h2 className="text-xl font-semibold text-gray-950">Topic articles</h2>
         <p className="mt-1 text-sm text-gray-500">
           LLM-discovered topics from your pieces. Overlapping membership is intended — a piece can
-          inform several articles.
+          inform several articles. Favorited articles are archived and kept when the next compile
+          wipes stale ones.
         </p>
         {db.articles.length === 0 ? (
           <p className="mt-4 rounded-xl border border-dashed border-gray-300 bg-white p-8 text-gray-500">
@@ -331,12 +353,29 @@ export default function KnowledgeDashboard({
             {db.articles.map((article) => (
               <div key={article.slug} className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                 <div className="flex flex-wrap items-baseline justify-between gap-3">
-                  <Link
-                    href={`/knowledge/articles/${article.slug}`}
-                    className="text-lg font-semibold text-gray-950 hover:text-blue-700"
-                  >
-                    {article.title}
-                  </Link>
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href={`/knowledge/articles/${article.slug}`}
+                      className="text-lg font-semibold text-gray-950 hover:text-blue-700"
+                    >
+                      {article.title}
+                    </Link>
+                    <button
+                      type="button"
+                      onClick={() => void toggleFavorite(article)}
+                      title={
+                        article.favorite
+                          ? "Favorited — archived, kept by the next compile"
+                          : "Mark as favorite — survives the next compile wipe"
+                      }
+                      aria-label={article.favorite ? "Unfavorite article" : "Favorite article"}
+                      className={`text-base leading-none ${
+                        article.favorite ? "text-amber-500 hover:text-amber-600" : "text-gray-300 hover:text-amber-400"
+                      }`}
+                    >
+                      {article.favorite ? "★" : "☆"}
+                    </button>
+                  </div>
                   <span className="text-xs text-gray-500">
                     {article.pieceCount} piece{article.pieceCount === 1 ? "" : "s"}
                     {article.paperCount > 0 ? ` · ${article.paperCount} paper${article.paperCount === 1 ? "" : "s"} grounded` : ""}
