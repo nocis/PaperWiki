@@ -1,13 +1,23 @@
 /**
  * PaperWiki incremental compiler.
  *
- * Usage: yarn compile [--model <id>]
+ * Usage: yarn compile [--provider <id>] [--model <id>]
  *
  * Semantics (see wiki/SCHEMA.md):
  * - papers/new/ is the work queue: every PDF in it is this run's goal.
  * - Pre-flight LLM check; if unreachable, abort before touching anything.
- * - Per PDF: analyze (LLM) -> report -> classify (LLM) -> synthesize topic (LLM)
- *   -> write wiki pages -> move PDF out of the inbox (hard gate) -> derive db.
+ * - Per PDF, TWO LLM calls: (1) a merged analyze + classification pass over
+ *   the raw text (reference list extraction included — EVERY bibliography
+ *   entry, no truncation), then (2) topic synthesis once the topic page is
+ *   selected code-side. All else is code: slug resolution, figure extraction,
+ *   page writes, index/derive.
+ * - Citations: the reference list extracted in the merged call is persisted
+ *   to data/citations/map.json mid-run. After ALL papers of the run are
+ *   compiled, an end-of-run finalize pass runs ONE slim citation call per
+ *   paper against the FULL final index (see remapPaperCitations) — the map
+ *   entry, the ## Citations section, cites[] and the global citedBy[] are
+ *   derived from that pass, so the citation relation is built at compile
+ *   time with no manual rebuild.
  * - Any LLM failure mid-run aborts the run: processed papers persist,
  *   unprocessed PDFs stay in the inbox for the next run.
  */
@@ -17,8 +27,11 @@ import {
   llmHealthCheck,
   llmJson,
   resolveModel,
+  resolveProvider,
+  type LLMProviderDef,
 } from "../src/lib/llm";
 import { extractPdf } from "../src/lib/extract";
+import { extractFigures } from "../src/lib/extract-figures";
 import {
   PAPERS_NEW,
   PAPERS_COMPILED,
@@ -26,17 +39,16 @@ import {
   COMMENTS_DIR,
   WIKI_PAPERS_DIR,
   WIKI_TOPICS_DIR,
-  addCitedBy,
   appendLog,
   appendProposal,
   assertRemovedFromInbox,
   deriveDb,
   ensureDirs,
   findInboxPdfs,
+  readPaperPages,
   readProposals,
   readTopicPages,
   regenIndex,
-  resolveReferences,
   slugify,
   today,
   uniqueSlug,
@@ -47,20 +59,26 @@ import {
   type TopicFrontmatter,
   type WikiDb,
 } from "../src/lib/wiki";
+import {
+  readCitationMap,
+  recomputeCitedBy,
+  remapPaperCitations,
+  updatePaperCitations,
+} from "../src/lib/citations";
 import { renderPaperBody, renderTopicBody } from "../src/lib/templates";
 import {
   finishCompileRun,
   recordCompileEvent,
+  resumeCompileRun,
   runCompileStep,
   startCompileRun,
   updateCompileRun,
-} from "../src/lib/compile-progress";
+} from "../src/lib/runs";
 import {
-  milestoneClassifyPrompt,
-  paperAnalysisPrompt,
+  paperMergedPrompt,
   topicSynthesisPrompt,
   type Classification,
-  type PaperAnalysis,
+  type PaperMergedResponse,
   type TopicSynthesis,
 } from "../src/lib/prompts";
 
@@ -70,12 +88,20 @@ import {
 
 const LANGUAGE = "en";
 
-function parseArgs(argv: string[]): { model?: string } {
+function parseArgs(argv: string[]): { provider?: string; model?: string } {
+  const out: { provider?: string; model?: string } = {};
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--model" && argv[i + 1]) return { model: argv[i + 1] };
-    if (argv[i].startsWith("--model=")) return { model: argv[i].slice("--model=".length) };
+    if (argv[i] === "--provider" && argv[i + 1]) {
+      out.provider = argv[i + 1];
+    } else if (argv[i].startsWith("--provider=")) {
+      out.provider = argv[i].slice("--provider=".length);
+    } else if (argv[i] === "--model" && argv[i + 1]) {
+      out.model = argv[i + 1];
+    } else if (argv[i].startsWith("--model=")) {
+      out.model = argv[i].slice("--model=".length);
+    }
   }
-  return {};
+  return out;
 }
 
 function truncate(s: string, n: number): string {
@@ -171,7 +197,13 @@ async function moveToDuplicates(pdfPath: string, reason: string): Promise<void> 
 /**
  * Returns the compiled paper, or null when the file was skipped as a duplicate.
  */
-async function processPdf(pdfPath: string, model: string, index: number, total: number): Promise<DbPaper | null> {
+async function processPdf(
+  pdfPath: string,
+  provider: LLMProviderDef,
+  model: string,
+  index: number,
+  total: number
+): Promise<DbPaper | null> {
   const basename = path.basename(pdfPath);
   const relativeFile = path.relative(PAPERS_NEW, pdfPath) || basename;
   const filenameSlug = slugify(basename);
@@ -221,21 +253,36 @@ async function processPdf(pdfPath: string, model: string, index: number, total: 
   const extracted = await runCompileStep("extract-pdf", "Extract PDF text", () => extractPdf(pdfPath), paperCtx);
   console.log(`  extracted ${extracted.numPages} pages`);
 
-  // --- LLM 1: analyze -------------------------------------------------------
-  const analysis = await runCompileStep(
-    "analyze-paper",
-    "Analyze paper with LLM",
+  // --- LLM call 1: analyze + citations + classify (ONE merged call) ---------
+  // The reference list, citation records, and classification all derive from
+  // the raw paper text — extracted in a single round-trip. Classification and
+  // citation records are validated code-side right after.
+  const merged = await runCompileStep(
+    "analyze-classify",
+    "Analyze, classify, and build citations with LLM",
     async () => {
-      const analysisPrompt = paperAnalysisPrompt({
+      const prompt = paperMergedPrompt({
         text: extracted.text,
         metaTitle: extracted.metaTitle,
         kbIndex: kbIndexText(db),
+        topicTree: topicTreeText(db),
         language: LANGUAGE,
       });
-      return llmJson<PaperAnalysis>({ model, ...analysisPrompt });
+      const raw = await llmJson<PaperMergedResponse>({
+        provider,
+        model,
+        ...prompt,
+        maxTokens: 16000,
+        temperature: 0.2,
+      });
+      return {
+        ...raw,
+        classification: validateClassification(raw.classification, db),
+      };
     },
     paperCtx
   );
+  const analysis = merged;
 
   // --- Phase 2: report ------------------------------------------------------
   console.log(`  Title:        ${analysis.title}`);
@@ -243,6 +290,9 @@ async function processPdf(pdfPath: string, model: string, index: number, total: 
   console.log(`  Positioning:  ${analysis.evolutionaryChain?.role ?? "?"} — ${truncate(analysis.evolutionaryChain?.note ?? "", 160)}`);
   console.log(`  Contribution: ${truncate(analysis.contributions[0] ?? "(none)", 200)}`);
   console.log(`  Limitation:   ${truncate(analysis.limitations, 160)}`);
+  console.log(
+    `  Topic:        ${analysis.classification.action === "create" ? `(new) ${analysis.classification.topic!.slug}` : analysis.classification.topicSlug}${analysis.classification.subtopicSlug ? ` / ${analysis.classification.subtopicSlug}` : ""} — ${truncate(analysis.classification.reason, 140)}`
+  );
 
   // --- Canonical slug from the REAL title -----------------------------------
   // Files dropped as e.g. "2006.11239.pdf" are renamed to the paper's actual
@@ -284,26 +334,42 @@ async function processPdf(pdfPath: string, model: string, index: number, total: 
   if (slug !== filenameSlug) {
     console.log(`  Renamed:      ${basename} -> ${slug}.pdf`);
   }
-  // --- LLM 2: classify ------------------------------------------------------
-  const classification = await runCompileStep(
-    "classify-topic",
-    "Classify topic with LLM",
+
+  // --- Citation records: persisted raw list, records built at end-of-run ------
+  // The merged call extracts the FULL bibliography; normalization + matching
+  // against the (complete) final index happens in the end-of-run finalize
+  // pass (remapPaperCitations) so relations exist at compile time.
+  const rawReferences = merged.references ?? [];
+  console.log(`  References:   ${rawReferences.length} bibliography entr${rawReferences.length === 1 ? "y" : "ies"} extracted`);
+
+  await runCompileStep(
+    "write-citation-map",
+    "Persist reference list to citation map",
     async () => {
-      const classifyPrompt = milestoneClassifyPrompt({
-        title: analysis.title,
-        essence: analysis.essence,
-        contributions: analysis.contributions,
-        topicTree: topicTreeText(db),
-        language: LANGUAGE,
+      await updatePaperCitations(slug, {
+        rawReferences,
+        provider: provider.id,
+        model,
+        citations: [],
       });
-      const raw = await llmJson<Classification>({ model, ...classifyPrompt });
-      return validateClassification(raw, db);
     },
     { ...paperCtx, slug }
   );
-  console.log(
-    `  Topic:        ${classification.action === "create" ? `(new) ${classification.topic!.slug}` : classification.topicSlug}${classification.subtopicSlug ? ` / ${classification.subtopicSlug}` : ""} — ${truncate(classification.reason, 140)}`
+
+  // --- Figure extraction (best-effort, never aborts the run) -----------------
+  const figures = await runCompileStep(
+    "extract-figures",
+    "Extract figures",
+    () => extractFigures(pdfPath, slug),
+    { ...paperCtx, slug }
   );
+  if (figures.length > 0) {
+    console.log(`  Figures:      ${figures.map((f) => f.file).join(", ")}`);
+  }
+
+  // --- LLM 2: classify ------------------------------------------------------
+  // Classification was validated inside the merged call; use it directly.
+  const classification = merged.classification;
 
   // --- Frontmatter tags -------------------------------------------------------
   const tags: string[] = [];
@@ -364,24 +430,9 @@ async function processPdf(pdfPath: string, model: string, index: number, total: 
     { ...paperCtx, slug }
   );
 
-  // --- Reference resolution (code-side, bidirectional) ------------------------
-  const { resolvedRefs, cites } = await runCompileStep(
-    "resolve-citations",
-    "Resolve citation links",
-    async () => {
-      const refs = resolveReferences(
-        (analysis.references ?? []).slice(0, 50),
-        db.papers.map((p) => ({ slug: p.slug, title: p.title })),
-        slug
-      );
-      const predecessorSlugs = (analysis.predecessors ?? [])
-        .map((p) => p.slug)
-        .filter((s) => db.papers.some((p) => p.slug === s));
-      const linked = [...new Set([...refs.filter((r) => r.slug).map((r) => r.slug!), ...predecessorSlugs])].sort();
-      return { resolvedRefs: refs, cites: linked };
-    },
-    { ...paperCtx, slug }
-  );
+  // --- Citation links (code-side) ------------------------------------------------
+  // cites[] is written by the end-of-run finalize pass (map is authoritative).
+  const cites: string[] = [];
 
   // --- Write paper page -------------------------------------------------------
   const relations = [
@@ -409,6 +460,7 @@ async function processPdf(pdfPath: string, model: string, index: number, total: 
     addedAt: today(),
     rawPath: path.join("papers", "compiled", `${slug}.pdf`),
     pdfUrl: `/pdfs/${slug}.pdf`,
+    figures: figures.map((f) => f.file),
     cites,
     citedBy: [],
   };
@@ -421,8 +473,9 @@ async function processPdf(pdfPath: string, model: string, index: number, total: 
     frontier: analysis.researchFrontier ?? "",
     relationsContext: analysis.relationsContext ?? "",
     relations,
-    references: resolvedRefs,
+    citations: { rawReferences, matches: [] },
     milestoneAnchor: milestone,
+    figures,
   });
 
   const paperPath = path.join(WIKI_PAPERS_DIR, `${slug}.md`);
@@ -433,17 +486,8 @@ async function processPdf(pdfPath: string, model: string, index: number, total: 
     { ...paperCtx, slug }
   );
 
-  // Bidirectional citedBy updates on target pages.
-  await runCompileStep(
-    "update-cited-by",
-    "Update cited-by links",
-    async () => {
-      for (const target of cites) {
-        await addCitedBy(target, slug);
-      }
-    },
-    { ...paperCtx, slug }
-  );
+  // Bidirectional citedBy links are recomputed globally by the finalize pass
+  // (cites[] is empty until then).
 
   // --- LLM 3: topic synthesis -------------------------------------------------
   const existingSources = db.papers.filter((p) => p.milestone === milestone);
@@ -477,7 +521,7 @@ async function processPdf(pdfPath: string, model: string, index: number, total: 
         subtopics: topicPage.fm.subtopics,
         language: LANGUAGE,
       });
-      return llmJson<TopicSynthesis>({ model, ...synthesisPrompt });
+      return llmJson<TopicSynthesis>({ provider, model, ...synthesisPrompt });
     },
     { ...paperCtx, slug }
   );
@@ -537,8 +581,8 @@ async function processPdf(pdfPath: string, model: string, index: number, total: 
       await appendLog("ingest", analysis.title, [
         `slug: ${slug}`,
         `topic: ${milestone}${subtopic ? ` / ${subtopic}` : ""} (${classification.action})`,
-        `cites: ${cites.length > 0 ? cites.join(", ") : "-"}`,
-        `model: ${model}`,
+        `references: ${rawReferences.length} extracted (relations finalized at end of run)`,
+        `provider: ${provider.id} · model: ${model}`,
       ]);
       await writeDbAtomic(nextDb);
       return nextDb;
@@ -629,33 +673,38 @@ async function consolidationChecks(db: WikiDb): Promise<number> {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const model = resolveModel(args.model);
+  const provider = resolveProvider(args.provider);
+  const model = resolveModel(provider, args.model);
 
-  await startCompileRun({
-    runId: process.env.PAPERWIKI_COMPILE_RUN_ID,
-    source: process.env.PAPERWIKI_COMPILE_SOURCE === "ui" ? "ui" : "cli",
-    model,
-  });
+  const uiRunId = process.env.PAPERWIKI_COMPILE_RUN_ID;
+  if (uiRunId) {
+    // The API route already recorded run-started and wrote the snapshot.
+    resumeCompileRun(uiRunId);
+  } else {
+    await startCompileRun({
+      source: "cli",
+      provider: provider.id,
+      model,
+    });
+  }
 
   try {
-    console.log(`PaperWiki compile — model: ${model}`);
+    console.log(`PaperWiki compile — provider: ${provider.id} · model: ${model}`);
 
     await runCompileStep("prepare-dirs", "Prepare workspace directories", () => ensureDirs());
 
     // Pre-flight: fail before touching anything if the LLM is unreachable.
-    await runCompileStep("llm-preflight", "Check LLM connectivity", () => llmHealthCheck(model));
+    await runCompileStep("llm-preflight", "Check LLM connectivity", () => llmHealthCheck(provider, model));
     console.log("LLM pre-flight check... ok");
 
     const inbox = await runCompileStep("scan-inbox", "Scan papers/new inbox", () => findInboxPdfs());
     await updateCompileRun({ totals: { papers: inbox.length, compiled: 0, duplicates: 0, failed: 0 } });
 
     if (inbox.length === 0) {
-      const message = "papers/new/ is empty — nothing to compile.";
-      console.log(message);
-      await finishCompileRun("completed", message);
-      return;
+      console.log("papers/new/ is empty — nothing new to compile.");
+    } else {
+      console.log(`Inbox: ${inbox.length} PDF(s)`);
     }
-    console.log(`Inbox: ${inbox.length} PDF(s)`);
 
     const compiled: DbPaper[] = [];
     const skipped: string[] = [];
@@ -663,7 +712,7 @@ async function main(): Promise<void> {
       const pdfPath = inbox[i];
       const basename = path.basename(pdfPath);
       try {
-        const result = await processPdf(pdfPath, model, i, inbox.length);
+        const result = await processPdf(pdfPath, provider, model, i, inbox.length);
         if (result) compiled.push(result);
         else skipped.push(basename);
         await updateCompileRun({
@@ -691,6 +740,77 @@ async function main(): Promise<void> {
         throw err;
       }
     }
+
+    // --- Citation finalize ------------------------------------------------------
+    // The citation relation is built at compile time: ONE slim call per paper
+    // against the FULL final index, then global citedBy recompute. Targets are
+    // every map entry with a persisted reference list but no records yet —
+    // this covers papers compiled this run AND pending entries left by an
+    // interrupted earlier run (compile self-heals; no separate rebuild needed).
+    const citationStats = await runCompileStep(
+      "finalize-citations",
+      "Finalize citation relations (LLM)",
+      async () => {
+        const pages = await readPaperPages();
+        const bySlug = new Map(pages.map((p) => [p.fm.slug, p]));
+        const index = pages.map((p) => ({ slug: p.fm.slug, title: p.fm.title, publishedAt: p.fm.publishedAt }));
+        const stats: { slug: string; matched: number; total: number }[] = [];
+        for (const paper of compiled) {
+          const map = await readCitationMap();
+          const refs = map.papers[paper.slug]?.rawReferences ?? [];
+          if (refs.length === 0) continue;
+          const result = await remapPaperCitations({
+            slug: paper.slug,
+            rawReferences: refs,
+            index,
+            provider,
+            model,
+            pagesBySlug: bySlug,
+          });
+          stats.push({ slug: paper.slug, matched: result.matched, total: result.total });
+          await appendLog("citations", paper.title, [
+            `slug: ${paper.slug}`,
+            `linked: ${result.matched}/${result.total}`,
+            `provider: ${provider.id} · model: ${model}`,
+          ]);
+        }
+        // Self-heal: papers whose finalize was interrupted (raw list persisted,
+        // records empty or stale-shaped) get finalized now.
+        const pending = Object.entries((await readCitationMap()).papers).filter(
+          ([, entry]) =>
+            entry.rawReferences.length > 0 &&
+            !compiled.some((p) => p.slug === entry.slug) &&
+            (entry.citations.length === 0 || typeof entry.citations[0].entry !== "number")
+        );
+        for (const [slug, entry] of pending) {
+          const result = await remapPaperCitations({
+            slug,
+            rawReferences: entry.rawReferences,
+            index,
+            provider,
+            model,
+            pagesBySlug: bySlug,
+          });
+          stats.push({ slug, matched: result.matched, total: result.total });
+          await appendLog("citations", bySlug.get(slug)?.fm.title ?? slug, [
+            `slug: ${slug}`,
+            `linked: ${result.matched}/${result.total}`,
+            `provider: ${provider.id} · model: ${model}`,
+          ]);
+        }
+        const reciprocityChanges = await recomputeCitedBy(pages);
+        if (reciprocityChanges > 0) {
+          await appendLog("citations", "citedBy reciprocity", [`updated ${reciprocityChanges} paper(s)`]);
+        }
+        return stats;
+      }
+    );
+    for (const s of citationStats) {
+      console.log(`  citations: ${s.slug} → ${s.matched}/${s.total} linked`);
+    }
+    await updateCompileRun({
+      totals: { papers: inbox.length, compiled: compiled.length, duplicates: skipped.length, failed: 0 },
+    });
 
     // Post-run: consolidation detection (Confirm-tier proposals only).
     const proposals = await runCompileStep(

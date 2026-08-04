@@ -2,6 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { useLlmPrefs } from "./LlmPrefsProvider";
+import { availabilityMessage } from "@/lib/llm-availability";
 
 type EventStatus = "started" | "completed" | "failed" | "skipped";
 type RunStatus = "idle" | "running" | "completed" | "failed";
@@ -25,6 +27,7 @@ type CompileRunSnapshot = {
   runId: string;
   status: RunStatus;
   source: "cli" | "ui";
+  provider?: string;
   model?: string;
   startedAt: string;
   updatedAt: string;
@@ -111,8 +114,22 @@ export default function PendingCompilePanel({
   const [requestError, setRequestError] = useState<string | null>(null);
   const [shouldPoll, setShouldPoll] = useState(initialStatus?.status === "running");
   const sawRunningRef = useRef(initialStatus?.status === "running");
+  const { prefs, availability, availabilityState, checkNow } = useLlmPrefs();
 
   const isCompiling = status?.status === "running" || shouldPoll;
+  const prefsUnresolved = !prefs.provider || !prefs.model;
+  const llmBlocked =
+    prefsUnresolved ||
+    availabilityState === "checking" ||
+    availabilityState === "unavailable" ||
+    availabilityState === "unknown";
+  const unavailableHint = prefsUnresolved
+    ? "Loading model configuration…"
+    : availabilityState === "unavailable" && availability
+      ? availabilityMessage(availability.kind, availability.provider, availability.model)
+      : availabilityState === "checking" || availabilityState === "unknown"
+        ? "Checking LLM availability…"
+        : null;
 
   useEffect(() => {
     if (!shouldPoll) return;
@@ -159,14 +176,25 @@ export default function PendingCompilePanel({
 
   async function compilePapers() {
     setRequestError(null);
+    if (availabilityState !== "available") {
+      setRequestError("LLM unavailable — cannot start compile.");
+      void checkNow();
+      return;
+    }
     setShouldPoll(true);
     sawRunningRef.current = true;
 
     try {
-      const response = await fetch("/api/compile", { method: "POST" });
+      const response = await fetch("/api/compile", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: prefs.provider, model: prefs.model }),
+      });
       const body = (await response.json()) as { error?: string };
       if (!response.ok) {
         setRequestError(body.error ?? `compile request failed with HTTP ${response.status}`);
+        setShouldPoll(false);
+        sawRunningRef.current = false;
       }
     } catch (err) {
       setRequestError(err instanceof Error ? err.message : "compile request failed");
@@ -207,14 +235,42 @@ export default function PendingCompilePanel({
           </ul>
         </div>
 
-        <button
-          type="button"
-          onClick={compilePapers}
-          disabled={isCompiling}
-          className="shrink-0 rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-amber-400"
-        >
-          {isCompiling ? "Compiling…" : "Run yarn compile"}
-        </button>
+        <div className="flex w-64 shrink-0 flex-col gap-3">
+          {unavailableHint && (
+            <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-800">
+              {unavailableHint}
+              {availabilityState === "unavailable" && (
+                <button
+                  type="button"
+                  onClick={() => void checkNow()}
+                  className="ml-1 font-medium underline underline-offset-2"
+                >
+                  Check now
+                </button>
+              )}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={compilePapers}
+            disabled={isCompiling || llmBlocked}
+            title={llmBlocked && availabilityState !== "available" ? "Waiting for LLM availability…" : undefined}
+            className="shrink-0 rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-amber-400"
+          >
+            {isCompiling
+              ? "Compiling…"
+              : llmBlocked
+                ? prefsUnresolved
+                  ? "Loading…"
+                  : availabilityState === "checking" || availabilityState === "unknown"
+                    ? "Checking availability…"
+                    : "LLM unavailable"
+                : "Run yarn compile"}
+          </button>
+          <p className="text-xs text-amber-900/70">
+            Using <code>{prefs.provider || "…"}/{prefs.model || "…"}</code> — configured in the top bar.
+          </p>
+        </div>
       </div>
 
       {(status || requestError) && (
@@ -230,7 +286,17 @@ export default function PendingCompilePanel({
               <p className="text-xs text-gray-500">
                 {status ? (
                   <>
-                    run <code>{status.runId}</code> · {status.source} · updated {formatTime(status.updatedAt)}
+                    run <code>{status.runId}</code> · {status.source}
+                    {status.provider || status.model ? (
+                      <>
+                        {" "}
+                        ·{" "}
+                        <code>
+                          {status.provider ?? "default"}/{status.model ?? "default"}
+                        </code>
+                      </>
+                    ) : null}
+                        · updated {formatTime(status.updatedAt)}
                     {status.currentFile ? ` · ${status.currentFile}` : ""}
                   </>
                 ) : (

@@ -61,6 +61,7 @@ export interface PaperFrontmatter {
   addedAt: string; // ISO date
   rawPath: string; // papers/compiled/<slug>.pdf
   pdfUrl: string; // /pdfs/<slug>.pdf
+  figures: string[]; // extracted figure filenames, e.g. ["figure_1.png"]
   cites: string[]; // paper slugs
   citedBy: string[]; // paper slugs
 }
@@ -102,6 +103,7 @@ export interface DbPaper {
   addedAt: string;
   url: string;
   essence: string; // first paragraph of ## Essence, for cards/one-liners
+  figures: string[]; // figure filenames, derived from frontmatter
   cites: string[];
   citedBy: string[];
 }
@@ -164,10 +166,6 @@ export function uniqueSlug(base: string, taken: ReadonlySet<string>): string {
     n += 1;
   }
   return slug;
-}
-
-export function normalizeTitle(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 export function today(): string {
@@ -336,6 +334,7 @@ export async function deriveDb(): Promise<WikiDb> {
     addedAt: p.fm.addedAt,
     url: p.fm.pdfUrl,
     essence: firstParagraphOfSection(p.body, "Essence"),
+    figures: p.fm.figures ?? [],
     cites: p.fm.cites,
     citedBy: p.fm.citedBy,
   }));
@@ -453,49 +452,6 @@ export async function readProposals(): Promise<Proposal[]> {
 export async function appendProposal(p: Omit<Proposal, "status" | "date">): Promise<void> {
   const line = `- [pending] ${today()} | ${p.type} | topic: ${p.topic} | subtopic: ${p.subtopic ?? "-"} | reason: ${p.reason}\n`;
   await fs.appendFile(PROPOSALS_MD, line);
-}
-
-// ---------------------------------------------------------------------------
-// Frontmatter mutation helpers
-// ---------------------------------------------------------------------------
-
-/** Add `fromSlug` to a paper page's citedBy[] (idempotent). */
-export async function addCitedBy(targetSlug: string, fromSlug: string): Promise<void> {
-  const filePath = path.join(WIKI_PAPERS_DIR, `${targetSlug}.md`);
-  const parsed = matter(await fs.readFile(filePath, "utf8"));
-  const fm = parsed.data as PaperFrontmatter;
-  if (fm.citedBy.includes(fromSlug)) return;
-  fm.citedBy = [...fm.citedBy, fromSlug].sort();
-  await writePage(filePath, fm, parsed.content);
-}
-
-/** Update one paper page's cites[] (idempotent). */
-export async function setCites(slug: string, cites: string[]): Promise<void> {
-  const filePath = path.join(WIKI_PAPERS_DIR, `${slug}.md`);
-  const parsed = matter(await fs.readFile(filePath, "utf8"));
-  const fm = parsed.data as PaperFrontmatter;
-  fm.cites = [...new Set(cites)].sort();
-  await writePage(filePath, fm, parsed.content);
-}
-
-/**
- * Resolve raw reference strings to existing paper slugs via normalized-title
- * matching (exact or containment, minimum length guard).
- */
-export function resolveReferences(
-  references: string[],
-  papers: { slug: string; title: string }[],
-  selfSlug: string
-): { raw: string; slug: string | null }[] {
-  const candidates = papers
-    .filter((p) => p.slug !== selfSlug)
-    .map((p) => ({ slug: p.slug, norm: normalizeTitle(p.title) }))
-    .filter((p) => p.norm.length >= 12);
-  return references.map((raw) => {
-    const normRef = normalizeTitle(raw);
-    const hit = candidates.find((c) => normRef.includes(c.norm) || c.norm.includes(normRef));
-    return { raw, slug: hit?.slug ?? null };
-  });
 }
 
 // ---------------------------------------------------------------------------

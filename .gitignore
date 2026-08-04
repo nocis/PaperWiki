@@ -30,3 +30,7 @@ opencode-config.jsonc
 
 .next
 .log/
+
+# PyMuPDF figure extraction venv
+.pymupdf/
+__pycache__/

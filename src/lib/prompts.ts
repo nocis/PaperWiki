@@ -6,8 +6,12 @@
 import type { ChatMessage } from "./llm";
 
 // ---------------------------------------------------------------------------
-// 1. Paper analysis (Ingest Phase 1)
+// 1. Paper analysis + classification (ONE merged call; citations are matched
+//    separately by the slim citation-map call)
 // ---------------------------------------------------------------------------
+
+/** Defensive cap on bibliography extraction — the prompt demands EVERY entry; this only bounds the JSON. */
+export const MAX_REFERENCES = 150;
 
 export interface PaperAnalysis {
   title: string;
@@ -28,29 +32,62 @@ export interface PaperAnalysis {
   relationsContext: string;
 }
 
-export function paperAnalysisPrompt(opts: {
+export interface Classification {
+  action: "assign" | "create";
+  topicSlug?: string;
+  subtopicSlug?: string | null;
+  topic?: {
+    slug: string;
+    name: string;
+    definition: string;
+    parentSlug: string | null;
+    tags: string[];
+  };
+  reason: string;
+}
+
+/** One LLM response covering analysis + classification (citation records are built separately by the slim map call). */
+export interface PaperMergedResponse extends PaperAnalysis {
+  classification: Classification;
+}
+
+export function paperMergedPrompt(opts: {
   text: string;
   metaTitle: string | null;
   kbIndex: string;
+  topicTree: string;
   language: string;
 }): { system: string; user: string } {
-  const system = `You are the maintainer of a research-paper wiki knowledge base. You analyze ONE new paper and return a strict JSON object.
-
-Rules:
-- Respond with JSON only. No prose outside the JSON object.
-- Write all prose fields in language "${opts.language}".
+  const system = `You are the maintainer of a research-paper wiki knowledge base. You analyze ONE new paper and return a strict JSON object containing TWO parts: the paper analysis and the milestone classification. You may read the full paper text for both parts.
+Part 1 — ANALYSIS. Rules:
 - "predecessors", "crossTopicImpacts" and "contradictions" may ONLY reference paper slugs from the EXISTING WIKI INDEX provided by the user. Never invent slugs. If none apply, use empty arrays.
 - Derive contributions from the delta between the field's prior art (the paper's own related work) and what the paper adds — never state them as isolated claims.
 - essence: 3 sentences max (scope, method, insight), under 600 characters.
 - contributions: 3-6 concise deltas, each under 200 characters.
-- references: the paper's bibliography entries as raw strings, best-effort, max 25.
+- references: the COMPLETE bibliography — every entry verbatim as printed in the paper, no truncation. At most ${MAX_REFERENCES} entries; omit only pure noise lines (page headers, section notes).
 - novelInsight, limitations, researchFrontier, and relationsContext: under 800 characters each.
 - evolutionaryChain.role: "origin" (starts a new line of work), "intermediate" (builds on predecessors), "terminal" (closes/supersedes a line), or "fork" (splits a line).
 - relationsContext: one short paragraph positioning the paper in the field's timeline (its predecessors, what it supersedes or contradicts).
+
+Part 2 — CLASSIFICATION (fitness check, mandatory; use the raw paper text, not just the summary):
+- The paper's core research question must genuinely fall within the topic's milestone definition.
+- Shared keywords do NOT imply shared research questions.
+- If no existing topic is a genuine conceptual match, CREATE a new standalone topic. Misclassification is worse than a small new topic.
+- Topic tree has max depth 3. A "create" with parentSlug is only allowed if the parent is at depth <= 2.
+- Prefer assigning to an existing genuine fit over creating a near-duplicate topic.
+- If a merged-parent topic (mode "merged") has a matching subtopic, assign with subtopicSlug set.
+- New topic slugs: kebab-case, short, conceptual (e.g. "self-evolving-memory-architectures").
+
+GENERAL:
+- Respond with JSON only. No prose outside the JSON object.
+- Write all prose fields in language "${opts.language}".
 - Keep the complete JSON response compact so it fits within the output token limit.`;
 
   const user = `EXISTING WIKI INDEX (papers you may reference by slug):
 ${opts.kbIndex || "(empty — this is one of the first papers)"}
+
+EXISTING TOPIC TREE (slug — definition [mode, subtopics]):
+${opts.topicTree || "(empty — no topics yet)"}
 
 PDF metadata title: ${opts.metaTitle ?? "(none)"}
 
@@ -74,69 +111,16 @@ Return JSON with exactly these fields:
   "crossDomainOrigin": string | null,
   "crossTopicImpacts": [{ "slug": string, "note": string }],
   "contradictions": [{ "slug": string, "note": string }],
-  "relationsContext": string
+  "relationsContext": string,
+  "classification": { "action": "assign", "topicSlug": string, "subtopicSlug": string|null, "reason": string }
+              OR { "action": "create", "topic": { "slug": string, "name": string, "definition": string, "parentSlug": string|null, "tags": string[] }, "reason": string }
 }`;
 
   return { system, user };
 }
 
 // ---------------------------------------------------------------------------
-// 2. Milestone classification (Ingest Phase 1, step 6 — with fitness check)
-// ---------------------------------------------------------------------------
-
-export interface Classification {
-  action: "assign" | "create";
-  topicSlug?: string;
-  subtopicSlug?: string | null;
-  topic?: {
-    slug: string;
-    name: string;
-    definition: string;
-    parentSlug: string | null;
-    tags: string[];
-  };
-  reason: string;
-}
-
-export function milestoneClassifyPrompt(opts: {
-  title: string;
-  essence: string;
-  contributions: string[];
-  topicTree: string;
-  language: string;
-}): { system: string; user: string } {
-  const system = `You are the maintainer of a research-paper wiki. You assign ONE new paper to a milestone topic, or create a new topic. Return strict JSON only.
-
-CLASSIFICATION FITNESS CHECK (mandatory):
-- The paper's core research question must genuinely fall within the topic's milestone definition.
-- Shared keywords do NOT imply shared research questions. (A paper about general LLM jailbreaking does NOT fit an "agent safety" topic just because both involve "safety".)
-- If no existing topic is a genuine conceptual match, CREATE a new standalone topic. Misclassification is worse than a small new topic.
-
-Rules:
-- Topic tree has max depth 3. A "create" with parentSlug is only allowed if the parent is at depth <= 2.
-- Prefer assigning to an existing genuine fit over creating a near-duplicate topic.
-- If a merged-parent topic (mode "merged") has a matching subtopic, assign with subtopicSlug set.
-- New topic slugs: kebab-case, short, conceptual (e.g. "self-evolving-memory-architectures").
-- Write definition and name in language "${opts.language}".`;
-
-  const user = `NEW PAPER:
-Title: ${opts.title}
-Essence: ${opts.essence}
-Contributions:
-${opts.contributions.map((c) => `- ${c}`).join("\n")}
-
-EXISTING TOPIC TREE (slug — definition [mode, subtopics]):
-${opts.topicTree || "(empty — no topics yet)"}
-
-Return JSON with exactly one of these shapes:
-{ "action": "assign", "topicSlug": string, "subtopicSlug": string | null, "reason": string }
-{ "action": "create", "topic": { "slug": string, "name": string, "definition": string, "parentSlug": string | null, "tags": string[] }, "reason": string }`;
-
-  return { system, user };
-}
-
-// ---------------------------------------------------------------------------
-// 3. Topic synthesis (Ingest Phase 4 — the compounding step)
+// 2. Topic synthesis (Ingest Phase 4 — the compounding step)
 // ---------------------------------------------------------------------------
 
 export interface TopicSynthesis {
@@ -194,7 +178,7 @@ Return JSON:
 }
 
 // ---------------------------------------------------------------------------
-// 4. Query retrieval (chat hub, step 1: read the index, pick pages)
+// 3. Query retrieval (chat hub, step 1: read the index, pick pages)
 // ---------------------------------------------------------------------------
 
 export interface QueryRetrieval {
@@ -226,7 +210,157 @@ Return JSON: { "pages": string[], "papers": string[] }`;
 }
 
 // ---------------------------------------------------------------------------
-// 5. Query answer (chat hub, step 2: answer from retrieved pages)
+// 4. Citation map (raw bibliography → resolved matches only)
+// ---------------------------------------------------------------------------
+
+export interface CitationMapResponse {
+  citations: {
+    /** 1-based position of the entry in the numbered reference list. */
+    entry: number;
+    matchedSlug: string;
+  }[];
+}
+
+export function citationMapPrompt(opts: { references: string[]; index: string }): {
+  system: string;
+  user: string;
+} {
+  const system = `You maintain a citation map for a research-paper wiki. Given a paper's numbered reference list (any citation style: IEEE, APA, BibTeX, ACM, etc.) and the wiki's compiled-paper index, find which entries are the same paper as a compiled wiki paper. Return strict JSON only.
+
+Rules:
+- Return ONLY entries that are genuinely the same paper: title strongly similar AND year/authors consistent. Never approximate, never guess.
+- "entry" is the 1-based position of the entry in the numbered list below; "matchedSlug" is its slug from the WIKI INDEX.
+- The paper being processed never cites itself; if an entry IS the paper itself, skip it.
+- If no entries match, return { "citations": [] }.
+- Respond with JSON only. No prose outside the JSON object.`;
+
+  const user = `WIKI INDEX (compiled papers you may match against):
+${opts.index || "(empty index)"}
+
+REFERENCE LIST OF THE PAPER (numbered, as extracted from its bibliography):
+${opts.references.length > 0 ? opts.references.map((r, i) => `${i + 1}. ${r}`).join("\n") : "(empty)"}
+
+Return JSON: { "citations": [ { "entry": number, "matchedSlug": string } ] }`;
+
+  return { system, user };
+}
+
+// ---------------------------------------------------------------------------
+// 5. Knowledge Compile (user knowledge → overlapping topic articles)
+// ---------------------------------------------------------------------------
+
+export interface KnowledgeClusterArticle {
+  slug: string;
+  title: string;
+  definition: string;
+  pieceSlugs: string[];
+  paperSlugs: string[];
+  /** Code-side, overlap-derived after the cluster response is validated. */
+  relatedArticleSlugs?: string[];
+}
+
+export interface KnowledgeClusterResponse {
+  articles: KnowledgeClusterArticle[];
+}
+
+export function knowledgeClusterPrompt(opts: {
+  pieces: { slug: string; kind: string; topics: string[]; body: string }[];
+  papers: string; // compact wiki paper index
+  topics: string; // compact wiki topic tree
+  language: string;
+}): { system: string; user: string } {
+  const system = `You organize a researcher's personal knowledge into topic articles for a Wikipedia-style knowledge base. Given the researcher's knowledge pieces (atomic notes and chat extracts) and the literature wiki, cluster the pieces into coherent topics. Return strict JSON only.
+
+Rules:
+- Discover the topics yourself from the content (e.g. "diffusion sampling evolving", "from UNet to DiT as continuous solvers") — do NOT mirror wiki topics unless the pieces genuinely form that topic.
+- A piece MAY appear in MULTIPLE articles when it genuinely belongs to several topics (overlapping membership is intended).
+- Every piece must appear in at least one article. Do not drop pieces; if a piece is truly standalone, make it a single-piece article.
+- Respect piece topic hints ("topics" field) as nudges toward grouping, but decide by content fit.
+- "paperSlugs" per article: from the WIKI PAPERS index only, the compiled papers that the article's claims engage with. Never invent slugs; empty array if none.
+- article slugs: kebab-case, short, conceptual, unique.
+- definition: one sentence (under 200 characters) capturing the article's scope.
+- Respond with JSON only. Write all prose in language "${opts.language}".`;
+
+  const piecesText = opts.pieces
+    .map((p) => `### [[${p.slug}]] (kind: ${p.kind}${p.topics.length > 0 ? `, hints: ${p.topics.join(", ")}` : ""})\n${p.body}`)
+    .join("\n\n");
+
+  const user = `WIKI PAPERS (compiled literature, may be referenced by slug):
+${opts.papers || "(no papers compiled yet — grounding will be limited)"}
+
+WIKI TOPICS (for context):
+${opts.topics || "(none)"}
+
+KNOWLEDGE PIECES (${opts.pieces.length}):
+${piecesText || "(no pieces — return {\"articles\": []})"}
+
+Return JSON: { "articles": [ { "slug": string, "title": string, "definition": string, "pieceSlugs": string[], "paperSlugs": string[] } ] }`;
+
+  return { system, user };
+}
+
+export interface KnowledgeArticleResponse {
+  definition: string;
+  /** Markdown body of the ## Synthesis section — claims cite [[piece-slug]]. */
+  synthesis: string;
+  /** Evidence mapping of the article's claims against wiki papers. */
+  grounding: { slug: string; status: "supports" | "contradicts" | "unaddressed"; note: string }[];
+  novelty: string;
+  critique: string;
+  limitations: string;
+  frontier: string;
+}
+
+export function knowledgeArticlePrompt(opts: {
+  title: string;
+  definition: string;
+  pieces: { slug: string; body: string }[];
+  papers: string; // compact wiki paper index
+  topics: string;
+  language: string;
+}): { system: string; user: string } {
+  const system = `You write a topic article for a researcher's personal knowledge base, then review it against the literature wiki. Return strict JSON only.
+
+The article has two parts:
+1. SYNTHESIS — turn the knowledge pieces into a coherent narrative. Every claim must be attributed to its piece(s) with [[piece-slug]]. Do not add external knowledge; synthesize what the pieces say.
+2. ACADEMIC REVIEW — check the article's claims against the WIKI PAPERS (the literature ground truth):
+   - "grounding": for each relevant wiki paper (from WIKI PAPERS), map whether it SUPPORTS, CONTRADICTS, or leaves UNADDRESSED the article's claims. Include papers where the article's claims directly engage or should engage; only slugs from WIKI PAPERS. Status semantics: "supports" = evidence aligns, "contradicts" = tension/conflict, "unaddressed" = the wiki paper is relevant but the pieces don't cover it (a gap).
+   - "novelty": what in the article is genuinely the researcher's own insight vs. restating the literature.
+   - "critique": methodological or evidential weaknesses of the claims as stated in the pieces.
+   - "limitations": what this article cannot claim given the compiled literature (gaps, missing evidence).
+   - "research frontier": the open questions and next directions the article points to, given the literature.
+- definition: one sentence (under 200 characters).
+- Respond with JSON only. Write all prose in language "${opts.language}". Never invent paper slugs.`;
+
+  const piecesText = opts.pieces.map((p) => `### [[${p.slug}]]\n${p.body}`).join("\n\n");
+
+  const user = `ARTICLE: ${opts.title}
+Scope: ${opts.definition}
+
+WIKI PAPERS (compiled literature — the ground truth for the review):
+${opts.papers || "(no papers compiled yet)"}
+
+WIKI TOPICS (context):
+${opts.topics || "(none)"}
+
+KNOWLEDGE PIECES FOR THIS ARTICLE (${opts.pieces.length}):
+${piecesText}
+
+Return JSON: {
+  "definition": string,
+  "synthesis": string,
+  "grounding": [ { "slug": string, "status": "supports|contradicts|unaddressed", "note": string } ],
+  "novelty": string,
+  "critique": string,
+  "limitations": string,
+  "frontier": string
+}`;
+
+  return { system, user };
+}
+
+// ---------------------------------------------------------------------------
+// 6. Query answer (chat hub, step 2: answer from retrieved pages)
 // ---------------------------------------------------------------------------
 
 export function buildAnswerMessages(opts: {

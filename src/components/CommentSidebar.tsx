@@ -1,6 +1,7 @@
 "use client";
 
 import type { PaperComment } from "./annotation-types";
+import AddToKnowledgeButton from "./AddToKnowledgeButton";
 
 export default function CommentSidebar({
   comments,
@@ -44,7 +45,14 @@ export default function CommentSidebar({
               )}
               <p className="mt-2 text-sm leading-5 text-gray-800">{comment.comment}</p>
             </button>
-            <div className="mt-2 flex justify-end opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+            <div className="mt-2 flex justify-end gap-3 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+              <AddToKnowledgeButton
+                kind="note"
+                source={comment.id}
+                content={`**Paper**: [[${comment.paperSlug}]] (p. ${comment.position.pageNumber})\n\n${comment.text ? `> ${comment.text}\n\n` : ""}${comment.comment}`}
+                title={`note-${comment.paperSlug}-${comment.position.pageNumber}`}
+                label="Add to knowledge"
+              />
               <button
                 type="button"
                 onClick={() => onDelete(comment)}

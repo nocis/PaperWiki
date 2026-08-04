@@ -1,60 +1,128 @@
 /**
- * Shared LLM client for the OpenCode Go gateway (OpenAI-compatible API).
- * Used by both the compile script and the web app's API routes.
+ * Shared LLM client for multiple OpenAI-compatible providers.
+ * Used by the compile script, the citation rebuild script, and the web app's
+ * API routes.
  *
  * Configuration:
- *   OPENCODE_API_KEY   (required) — bearer token for the gateway
- *   WIKI_LLM_BASE_URL  (optional) — override the gateway base URL
- *   WIKI_LLM_MODEL     (optional) — default model when no CLI/per-request override
+ *   <PROVIDER>.apiKeyEnv  (required for that provider) — bearer token, e.g.
+ *                          OPENCODE_API_KEY, DEEPSEEK_API_KEY
+ *   WIKI_LLM_PROVIDER     (optional) — default provider id
+ *   WIKI_LLM_MODEL        (optional) — default model when no CLI/per-request override
+ *   WIKI_LLM_BASE_URL     (optional) — override the selected provider's base URL
  */
-
-const BASE_URL = process.env.WIKI_LLM_BASE_URL ?? "https://opencode.ai/zen/go/v1";
-export const DEFAULT_MODEL = "deepseek-v4-flash";
+import { getProvider, LLM_PROVIDERS, DEFAULT_PROVIDER_ID, type LLMProviderDef } from "./llm-providers";
+export type { LLMProviderDef };
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
 
-/** Model resolution order: explicit CLI/per-request override > env > default. */
-export function resolveModel(override?: string): string {
-  return override ?? process.env.WIKI_LLM_MODEL ?? DEFAULT_MODEL;
+/**
+ * Provider resolution order: explicit/per-request override > env
+ * WIKI_LLM_PROVIDER > default. Throws on unknown ids (fail-hard).
+ */
+export function resolveProvider(override?: string): LLMProviderDef {
+  const id = override ?? process.env.WIKI_LLM_PROVIDER ?? DEFAULT_PROVIDER_ID;
+  const provider = getProvider(id);
+  if (!provider) {
+    throw new Error(`unknown LLM provider "${id}" — known providers: ${listProviderIds()}`);
+  }
+  return provider;
 }
 
-function apiKey(): string {
-  const key = process.env.OPENCODE_API_KEY;
+export function listProviderIds(): string {
+  return LLM_PROVIDERS.map((p) => p.id).join(", ");
+}
+
+export type LlmErrorKind = "missing-key" | "auth" | "quota" | "unreachable" | "other";
+
+/** Categorized LLM failure — lets callers (UI, API routes) react per kind. */
+export class LlmError extends Error {
+  kind: LlmErrorKind;
+  constructor(kind: LlmErrorKind, message: string) {
+    super(message);
+    this.name = "LlmError";
+    this.kind = kind;
+  }
+}
+
+/** Best-effort kind classification for any thrown error. */
+export function classifyLlmError(err: unknown): { kind: LlmErrorKind; message: string } {
+  if (err instanceof LlmError) return { kind: err.kind, message: err.message };
+  const message = err instanceof Error ? err.message : String(err);
+  if (/is not set|API_KEY/i.test(message)) return { kind: "missing-key", message };
+  if (/(401|403)/.test(message)) return { kind: "auth", message };
+  if (/(402|429|quota|rate limit)/i.test(message)) return { kind: "quota", message };
+  if (/fetch failed|ENOTFOUND|ECONNREFUSED|network|502|503|504/.test(message)) {
+    return { kind: "unreachable", message };
+  }
+  return { kind: "other", message };
+}
+
+/**
+ * Model resolution order: explicit CLI/per-request override > env
+ * WIKI_LLM_MODEL > provider default.
+ */
+export function resolveModel(provider: LLMProviderDef, override?: string): string {
+  return override ?? process.env.WIKI_LLM_MODEL ?? provider.defaultModel;
+}
+
+function apiKey(provider: LLMProviderDef): string {
+  const key = process.env[provider.apiKeyEnv];
   if (!key) {
-    throw new Error(
-      "OPENCODE_API_KEY is not set. Export it (or add it to .env.local) before running the LLM pipeline."
+    throw new LlmError(
+      "missing-key",
+      `${provider.apiKeyEnv} is not set. Add it to .env.local and restart the server before using the LLM pipeline.`
     );
   }
   return key;
+}
+
+function baseUrl(provider: LLMProviderDef): string {
+  return process.env.WIKI_LLM_BASE_URL ?? provider.baseUrl;
 }
 
 interface ChatCompletionResponse {
   choices?: { message?: { content?: string } }[];
 }
 
-/** Transport-level POST. Throws on HTTP errors; returns the parsed response. */
-async function postChat(body: Record<string, unknown>): Promise<ChatCompletionResponse> {
-  const res = await fetch(`${BASE_URL}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${apiKey()}`,
-    },
-    body: JSON.stringify(body),
-  });
+/** Transport-level POST. Throws LlmError on HTTP/network errors. */
+async function postChat(provider: LLMProviderDef, body: Record<string, unknown>): Promise<ChatCompletionResponse> {
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl(provider)}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey(provider)}`,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new LlmError(
+      "unreachable",
+      `LLM gateway unreachable (provider ${provider.id}): ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
   if (!res.ok) {
     const detail = (await res.text()).slice(0, 500);
-    throw new Error(`LLM request failed: HTTP ${res.status} — ${detail}`);
+    const kind: LlmErrorKind =
+      res.status === 401 || res.status === 403
+        ? "auth"
+        : res.status === 402 || res.status === 429
+          ? "quota"
+          : res.status >= 500
+            ? "unreachable"
+            : "other";
+    throw new LlmError(kind, `LLM request failed (provider ${provider.id}): HTTP ${res.status} — ${detail}`);
   }
   return (await res.json()) as ChatCompletionResponse;
 }
 
 /** Chat completion with strict non-empty content validation (for real calls). */
-async function postChatCompletion(body: Record<string, unknown>): Promise<string> {
-  const data = await postChat(body);
+async function postChatCompletion(provider: LLMProviderDef, body: Record<string, unknown>): Promise<string> {
+  const data = await postChat(provider, body);
   const content = data.choices?.[0]?.message?.content;
   if (typeof content !== "string" || content.length === 0) {
     throw new Error("LLM returned an empty response");
@@ -68,8 +136,8 @@ async function postChatCompletion(body: Record<string, unknown>): Promise<string
  * legitimately be empty here (reasoning models can spend a tiny max_tokens
  * budget on reasoning_content), so it is intentionally not inspected.
  */
-export async function llmHealthCheck(model: string): Promise<void> {
-  const data = await postChat({
+export async function llmHealthCheck(provider: LLMProviderDef, model: string): Promise<void> {
+  const data = await postChat(provider, {
     model,
     messages: [{ role: "user", content: "Reply with the word: ok" }],
     max_tokens: 32,
@@ -102,6 +170,7 @@ export function extractJson<T>(raw: string): T {
 
 /** Structured JSON completion with defensive parsing and one malformed-output retry. */
 export async function llmJson<T>(opts: {
+  provider: LLMProviderDef;
   model: string;
   system?: string;
   user: string;
@@ -121,11 +190,11 @@ export async function llmJson<T>(opts: {
     };
 
     try {
-      return await postChatCompletion({ ...base, response_format: { type: "json_object" } });
+      return await postChatCompletion(opts.provider, { ...base, response_format: { type: "json_object" } });
     } catch (err) {
       // Some gateway models may reject response_format — retry once without it.
       if (err instanceof Error && /response_format|json_object/i.test(err.message)) {
-        return postChatCompletion(base);
+        return postChatCompletion(opts.provider, base);
       }
       throw err;
     }
@@ -149,7 +218,7 @@ export async function llmJson<T>(opts: {
       },
       {
         role: "user",
-        content: `${opts.user}\n\nCRITICAL OUTPUT BUDGET:\n- Complete and close the entire JSON object.\n- Keep every prose string concise (under 800 characters).\n- Use at most 6 contributions and at most 20 references when those fields are requested.\n- Omit no required fields.\n\nMALFORMED PREVIOUS RESPONSE (sample):\n${sample}`,
+        content: `${opts.user}\n\nCRITICAL OUTPUT BUDGET:\n- Complete and close the entire JSON object.\n- Keep every prose string concise (under 800 characters).\n- Respect any per-field caps stated in the original prompt.\n- Omit no required fields.\n\nMALFORMED PREVIOUS RESPONSE (sample):\n${sample}`,
       },
     ];
 
@@ -166,12 +235,13 @@ export async function llmJson<T>(opts: {
 
 /** Plain chat completion (used by the /chat hub). */
 export async function llmChat(opts: {
+  provider: LLMProviderDef;
   model: string;
   messages: ChatMessage[];
   maxTokens?: number;
   temperature?: number;
 }): Promise<string> {
-  return postChatCompletion({
+  return postChatCompletion(opts.provider, {
     model: opts.model,
     messages: opts.messages,
     temperature: opts.temperature ?? 0.3,

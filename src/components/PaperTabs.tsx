@@ -3,16 +3,26 @@
 import type { ReactNode } from "react";
 import { useState } from "react";
 
-export default function PaperTabs({ annotate, wiki }: { annotate: ReactNode; wiki: ReactNode }) {
-  const [tab, setTab] = useState<"annotate" | "wiki">("annotate");
+export default function PaperTabs({
+  annotate,
+  wiki,
+  figures,
+}: {
+  annotate: ReactNode;
+  wiki: ReactNode;
+  figures?: ReactNode;
+}) {
+  const tabs: { value: string; label: string; node: ReactNode }[] = [
+    { value: "annotate", label: "Annotate", node: annotate },
+    ...(figures ? [{ value: "figures", label: "Figures", node: figures }] : []),
+    { value: "wiki", label: "Wiki", node: wiki },
+  ];
+  const [tab, setTab] = useState<string>(tabs[0].value);
 
   return (
     <div>
       <div className="flex gap-1 border-b border-gray-200" role="tablist" aria-label="Paper views">
-        {([
-          ["annotate", "Annotate"],
-          ["wiki", "Wiki"],
-        ] as const).map(([value, label]) => (
+        {tabs.map(({ value, label }) => (
           <button
             key={value}
             type="button"
@@ -29,7 +39,7 @@ export default function PaperTabs({ annotate, wiki }: { annotate: ReactNode; wik
           </button>
         ))}
       </div>
-      <div className="pt-6">{tab === "annotate" ? annotate : wiki}</div>
+      <div className="pt-6">{tabs.find((t) => t.value === tab)?.node}</div>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import AnnotatePanel from "@/components/AnnotatePanel";
+import FigureGallery from "@/components/FigureGallery";
 import PaperTabs from "@/components/PaperTabs";
 import WikiMarkdown from "@/components/WikiMarkdown";
 import { loadDb, readPaperPages } from "@/lib/wiki";
@@ -51,6 +52,11 @@ export default async function PaperPage({ params }: { params: { slug: string } }
 
       <PaperTabs
         annotate={<AnnotatePanel slug={frontmatter.slug} pdfUrl={frontmatter.pdfUrl} />}
+        figures={
+          (frontmatter.figures ?? []).length > 0 ? (
+            <FigureGallery slug={frontmatter.slug} files={frontmatter.figures} />
+          ) : undefined
+        }
         wiki={
           <WikiMarkdown
             content={page.body}

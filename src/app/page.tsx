@@ -1,7 +1,9 @@
 import * as path from "path";
 import Link from "next/link";
+import type { ComponentProps } from "react";
 import PendingCompilePanel from "@/components/PendingCompilePanel";
-import { readCompileStatus } from "@/lib/compile-progress";
+import { readEffectiveCompileStatus } from "@/lib/runs";
+import { runLint, summarize } from "@/lib/lint-wiki";
 import {
   findInboxPdfs,
   loadDb,
@@ -10,6 +12,7 @@ import {
   type DbPaper,
   type DbTopic,
 } from "@/lib/wiki";
+import { deriveKnowledgeDb } from "@/lib/knowledge";
 
 export const dynamic = "force-dynamic";
 
@@ -94,12 +97,17 @@ function TopicNode({ topic, topics, papers, depth = 0 }: {
 }
 
 export default async function Dashboard() {
-  const [db, inboxPdfs, compileStatus, logEntries] = await Promise.all([
+  const [db, inboxPdfs, compileStatus, logEntries, lintReport, knowledgeDb] = await Promise.all([
     loadDb(),
     findInboxPdfs(),
-    readCompileStatus(),
+    // The generic tracker snapshot matches the client's CompileRunSnapshot
+    // shape at runtime (totals are a loose Record in the factory type).
+    readEffectiveCompileStatus() as unknown as ComponentProps<typeof PendingCompilePanel>["initialStatus"],
     readLog(),
+    runLint({ applyFixes: false, queueProposals: false }),
+    deriveKnowledgeDb(),
   ]);
+  const lintSummary = summarize(lintReport);
   const pendingFiles = inboxPdfs.map((file) => path.relative(PAPERS_NEW, file));
   const topics = new Map(db.topics.map((topic) => [topic.slug, topic]));
   const papers = new Map(db.papers.map((paper) => [paper.slug, paper]));
@@ -117,9 +125,39 @@ export default async function Dashboard() {
             {db.updatedAt ? ` · last compile ${new Date(db.updatedAt).toLocaleString()}` : ""}
           </p>
         </div>
-        <Link href="/wiki/proposals" className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 shadow-sm hover:border-gray-300">
-          Proposals{pendingProposals > 0 && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">{pendingProposals}</span>}
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/knowledge"
+            className="rounded-full border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-medium text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-100"
+          >
+            Knowledge
+            {(knowledgeDb.pieces.length > 0 || knowledgeDb.articles.length > 0) && (
+              <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-violet-700">
+                {knowledgeDb.articles.length > 0 ? `${knowledgeDb.articles.length} art` : `${knowledgeDb.pieces.length} pcs`}
+              </span>
+            )}
+          </Link>
+          <Link
+            href="/health"
+            className={`rounded-full border bg-white px-4 py-2 text-sm shadow-sm transition hover:border-gray-300 ${
+              lintSummary.errors > 0
+                ? "border-red-200 text-red-700"
+                : lintSummary.warnings > 0
+                  ? "border-amber-200 text-amber-700"
+                  : "border-gray-200 text-gray-700"
+            }`}
+          >
+            Health
+            {(lintSummary.errors > 0 || lintSummary.warnings > 0) && (
+              <span className={`ml-2 rounded-full px-2 py-0.5 text-xs font-semibold ${lintSummary.errors > 0 ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>
+                {lintSummary.errors > 0 ? `${lintSummary.errors} err` : `${lintSummary.warnings} warn`}
+              </span>
+            )}
+          </Link>
+          <Link href="/wiki/proposals" className="rounded-full border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 shadow-sm hover:border-gray-300">
+            Proposals{pendingProposals > 0 && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">{pendingProposals}</span>}
+          </Link>
+        </div>
       </div>
 
       {pendingFiles.length > 0 && <PendingCompilePanel files={pendingFiles} initialStatus={compileStatus} />}

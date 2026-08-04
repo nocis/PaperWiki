@@ -2,9 +2,20 @@ import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-function linkWikilinks(markdown: string, paperSlugs: Set<string>, topicSlugs: Set<string>): string {
+function linkWikilinks(
+  markdown: string,
+  paperSlugs: Set<string>,
+  topicSlugs: Set<string>,
+  knowledgeSlugs: Set<string>
+): string {
   return markdown.replace(/\[\[([a-z0-9][a-z0-9-]*)\]\]/gi, (_, slug: string) => {
-    const href = paperSlugs.has(slug) ? `/paper/${slug}` : topicSlugs.has(slug) ? `/wiki/topics/${slug}` : null;
+    const href = paperSlugs.has(slug)
+      ? `/paper/${slug}`
+      : topicSlugs.has(slug)
+        ? `/wiki/topics/${slug}`
+        : knowledgeSlugs.has(slug)
+          ? `/knowledge/articles/${slug}`
+          : null;
     return href ? `[${slug}](${href})` : slug;
   });
 }
@@ -13,10 +24,12 @@ export default function WikiMarkdown({
   content,
   paperSlugs,
   topicSlugs,
+  knowledgeSlugs = [],
 }: {
   content: string;
   paperSlugs: string[];
   topicSlugs: string[];
+  knowledgeSlugs?: string[];
 }) {
   return (
     <div className="wiki-md max-w-none">
@@ -58,6 +71,15 @@ export default function WikiMarkdown({
           strong: ({ node: _node, ...props }) => (
             <strong className="font-semibold text-gray-900" {...props} />
           ),
+          img: ({ node: _node, src, alt }) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={src}
+              alt={alt}
+              loading="lazy"
+              className="my-4 block max-h-96 w-auto max-w-full rounded-lg border border-gray-200 bg-white object-contain shadow-sm"
+            />
+          ),
           em: ({ node: _node, ...props }) => <em className="italic" {...props} />,
           blockquote: ({ node: _node, ...props }) => (
             <blockquote className="my-4 border-l-4 border-gray-200 pl-4 text-[15px] italic leading-7 text-gray-500" {...props} />
@@ -87,7 +109,7 @@ export default function WikiMarkdown({
           ),
         }}
       >
-        {linkWikilinks(content, new Set(paperSlugs), new Set(topicSlugs))}
+        {linkWikilinks(content, new Set(paperSlugs), new Set(topicSlugs), new Set(knowledgeSlugs))}
       </ReactMarkdown>
     </div>
   );

@@ -3,7 +3,7 @@ import * as path from "path";
 import matter from "gray-matter";
 import { NextRequest, NextResponse } from "next/server";
 import { buildAnswerMessages, queryRetrievePrompt, type QueryRetrieval } from "@/lib/prompts";
-import { llmChat, llmJson, resolveModel, type ChatMessage } from "@/lib/llm";
+import { llmChat, llmJson, resolveModel, resolveProvider, type ChatMessage } from "@/lib/llm";
 import {
   INDEX_MD,
   WIKI_DIR,
@@ -47,14 +47,26 @@ export async function POST(request: NextRequest) {
   if (question.length > MAX_MESSAGE_CHARS) return bad("question is too long");
 
   try {
+    let provider;
+    try {
+      provider = resolveProvider(
+        typeof input.provider === "string" && input.provider.length > 0 ? input.provider : undefined
+      );
+    } catch (err) {
+      return bad(err instanceof Error ? err.message : "unknown provider");
+    }
+    const model = resolveModel(
+      provider,
+      typeof input.model === "string" && input.model.length > 0 ? input.model : undefined
+    );
     const [index, schema, paperPages, topicPages] = await Promise.all([
       fs.readFile(INDEX_MD, "utf8"),
       fs.readFile(path.join(WIKI_DIR, "SCHEMA.md"), "utf8"),
       readPaperPages(),
       readTopicPages(),
     ]);
-    const model = resolveModel(typeof input.model === "string" ? input.model : undefined);
     const retrieval = await llmJson<QueryRetrieval>({
+      provider,
       model,
       ...queryRetrievePrompt({ index, question }),
       maxTokens: 1200,
@@ -79,10 +91,11 @@ export async function POST(request: NextRequest) {
       history: validHistory(input.history),
       language: typeof indexFrontmatter.wiki_language === "string" ? indexFrontmatter.wiki_language : "en",
     });
-    const answer = await llmChat({ model, messages, maxTokens: 4096, temperature: 0.3 });
+    const answer = await llmChat({ provider, model, messages, maxTokens: 4096, temperature: 0.3 });
     return NextResponse.json({
       answer,
       retrieved: { pages: pages.map((page) => page.slug), papers: papers.map((paper) => paper.slug) },
+      provider: provider.id,
       model,
     });
   } catch (error) {

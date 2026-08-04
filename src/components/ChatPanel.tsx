@@ -2,47 +2,45 @@
 
 import { useEffect, useState } from "react";
 import WikiMarkdown from "./WikiMarkdown";
+import AddToKnowledgeButton from "./AddToKnowledgeButton";
+import { useLlmPrefs } from "./LlmPrefsProvider";
+import { availabilityMessage } from "@/lib/llm-availability";
 
 type ChatRole = "user" | "assistant";
 type ChatMessage = { role: ChatRole; content: string };
 
 const STORAGE_MESSAGES = "paperwiki:chat:messages";
-const STORAGE_MODEL = "paperwiki:chat:model";
-const MODELS = [
-  "deepseek-v4-flash",
-  "deepseek-v4-pro",
-  "glm-5.1",
-  "glm-5.2",
-  "gpt-5.6-luna",
-  "grok-4.5",
-  "kimi-k2.6",
-  "kimi-k2.7-code",
-  "kimi-k3",
-  "minimax-m2.7",
-  "minimax-m3",
-  "qwen3.6",
-  "qwen3.7",
-  "hy3",
-  "mimo-v2.5",
-  "mimo-v2.5-pro",
-];
 
 export default function ChatPanel({ paperSlugs, topicSlugs }: { paperSlugs: string[]; topicSlugs: string[] }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [model, setModel] = useState(MODELS[0]);
   const [question, setQuestion] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [savedSlugs, setSavedSlugs] = useState<string[]>([]);
+  const { prefs, availabilityState, availability } = useLlmPrefs();
+
+  function toggleSelected(index: number) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
+  const selectedMessages = messages.filter((_, index) => selected.has(index));
+  const selectionText = selectedMessages
+    .map((message) => `[${message.role}]\n${message.content}`)
+    .join("\n\n---\n\n");
 
   useEffect(() => {
     try {
       const storedMessages = localStorage.getItem(STORAGE_MESSAGES);
-      const storedModel = localStorage.getItem(STORAGE_MODEL);
       if (storedMessages) {
         const parsed = JSON.parse(storedMessages) as ChatMessage[];
         if (Array.isArray(parsed)) setMessages(parsed.filter((message) => message && (message.role === "user" || message.role === "assistant") && typeof message.content === "string"));
       }
-      if (storedModel && MODELS.includes(storedModel)) setModel(storedModel);
     } catch {
       // Local storage is optional; the chat remains usable when it is unavailable.
     }
@@ -52,14 +50,10 @@ export default function ChatPanel({ paperSlugs, topicSlugs }: { paperSlugs: stri
     localStorage.setItem(STORAGE_MESSAGES, JSON.stringify(messages));
   }, [messages]);
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_MODEL, model);
-  }, [model]);
-
   async function sendMessage(event: React.FormEvent) {
     event.preventDefault();
     const text = question.trim();
-    if (!text || loading) return;
+    if (!text || loading || !prefs.provider || !prefs.model) return;
     setQuestion("");
     setError(null);
     setMessages((current) => [...current, { role: "user", content: text }]);
@@ -68,7 +62,7 @@ export default function ChatPanel({ paperSlugs, topicSlugs }: { paperSlugs: stri
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ question: text, history: messages.slice(-12), model }),
+        body: JSON.stringify({ question: text, history: messages.slice(-12), provider: prefs.provider, model: prefs.model }),
       });
       const data = (await response.json()) as { answer?: string; error?: string };
       if (!response.ok || !data.answer) throw new Error(data.error ?? "Chat request failed");
@@ -79,6 +73,11 @@ export default function ChatPanel({ paperSlugs, topicSlugs }: { paperSlugs: stri
       setLoading(false);
     }
   }
+
+  const unavailableHint =
+    availabilityState === "unavailable" && availability
+      ? availabilityMessage(availability.kind, availability.provider, availability.model)
+      : null;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_14rem]">
@@ -93,7 +92,16 @@ export default function ChatPanel({ paperSlugs, topicSlugs }: { paperSlugs: stri
           )}
           {messages.map((message, index) => (
             <div key={`${message.role}-${index}`} className={message.role === "user" ? "ml-auto max-w-2xl" : "max-w-3xl"}>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">{message.role === "user" ? "You" : "PaperWiki"}</p>
+              <div className="mb-2 flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  aria-label={`Select message ${index + 1} to save to knowledge`}
+                  checked={selected.has(index)}
+                  onChange={() => toggleSelected(index)}
+                  className="h-3.5 w-3.5 cursor-pointer rounded border-gray-300 accent-blue-700"
+                />
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">{message.role === "user" ? "You" : "PaperWiki"}</p>
+              </div>
               {message.role === "assistant" ? (
                 <WikiMarkdown content={message.content} paperSlugs={paperSlugs} topicSlugs={topicSlugs} />
               ) : (
@@ -103,8 +111,42 @@ export default function ChatPanel({ paperSlugs, topicSlugs }: { paperSlugs: stri
           ))}
           {loading && <p className="text-sm text-gray-500">Searching the wiki and composing an answer…</p>}
           {error && <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
+          {!error && unavailableHint && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{unavailableHint}</p>
+          )}
         </div>
         <form onSubmit={sendMessage} className="border-t border-gray-200 p-4 sm:p-5">
+          {selectedMessages.length > 0 && (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+              <p className="text-xs text-blue-800">
+                {selectedMessages.length} message{selectedMessages.length === 1 ? "" : "s"} selected — chat is temporal, save
+                the exchange as a knowledge piece before it scrolls away.
+              </p>
+              <div className="flex items-center gap-3">
+                {savedSlugs.length > 0 && (
+                  <span className="text-xs text-emerald-700">saved: {savedSlugs.join(", ")}</span>
+                )}
+                <AddToKnowledgeButton
+                  kind="chat"
+                  source={`chat-${new Date().toISOString()}`}
+                  content={selectionText}
+                  title={`chat-${messages.length}-messages`}
+                  label="Save selection"
+                  onDone={(slug) => {
+                    if (slug) setSavedSlugs((current) => [...current, slug]);
+                    setSelected(new Set());
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Set())}
+                  className="text-xs text-gray-500 hover:text-gray-800"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          )}
           <label htmlFor="chat-question" className="sr-only">Ask a question</label>
           <div className="flex gap-3">
             <textarea
@@ -116,19 +158,20 @@ export default function ChatPanel({ paperSlugs, topicSlugs }: { paperSlugs: stri
               rows={2}
               className="min-w-0 flex-1 resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none ring-blue-600 placeholder:text-gray-400 focus:ring-2"
             />
-            <button type="submit" disabled={loading || !question.trim()} className="self-end rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50">Ask</button>
+            <button type="submit" disabled={loading || !question.trim() || !prefs.provider || !prefs.model} className="self-end rounded-lg bg-blue-700 px-4 py-2 text-sm font-medium text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50">Ask</button>
           </div>
           <p className="mt-2 text-xs text-gray-400">Enter to send · Shift+Enter for a new line</p>
         </form>
       </section>
       <aside className="h-fit rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-        <label htmlFor="chat-model" className="text-xs font-semibold uppercase tracking-wider text-gray-500">Model</label>
-        <select id="chat-model" value={model} onChange={(event) => setModel(event.target.value)} className="mt-2 w-full rounded-lg border border-gray-300 bg-white px-2 py-2 text-sm">
-          {MODELS.map((candidate) => <option key={candidate} value={candidate}>{candidate}</option>)}
-        </select>
+        <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Model</p>
+        <p className="mt-1 text-sm text-gray-700">
+          {prefs.provider || "…"}/{prefs.model || "…"}
+        </p>
         <button type="button" onClick={() => setMessages([])} className="mt-5 text-sm text-gray-500 hover:text-red-600">Clear conversation</button>
-        <p className="mt-6 text-xs leading-5 text-gray-400">Conversation state stays in this browser only and is never written to the wiki.</p>
+        <p className="mt-6 text-xs leading-5 text-gray-400">Provider and model are configured site-wide in the top bar. Conversation state stays in this browser only and is never written to the wiki.</p>
       </aside>
     </div>
   );
 }
+
