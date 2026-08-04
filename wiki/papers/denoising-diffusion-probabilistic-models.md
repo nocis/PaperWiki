@@ -39,18 +39,25 @@ relations:
   - relation: builds-on
     slug: deep-unsupervised-learning-using-nonequilibrium-thermodynamics
     note: >-
-      Extends the original diffusion probabilistic model formulation from a
-      theoretical construct to a state-of-the-art generative model.
+      Extends Sohl-Dickstein et al.'s diffusion probabilistic models from toy
+      examples to high-quality image synthesis, introducing the
+      epsilon-prediction parameterization and simplified objective that make
+  - relation: impacts
+    slug: denoising-diffusion-implicit-models
+    note: >-
+      Provides the foundational diffusion framework that DDIM later accelerates
+      by introducing implicit sampling, inheriting the noise schedule and
+      training objective.
 ---
 ## Essence
-This paper makes diffusion probabilistic models practical for high-quality image synthesis. It reparameterizes the reverse process to predict the noise, connects the training objective to denoising score matching, and uses a simplified weighted variational bound. The resulting models achieve state-of-the-art FID on CIFAR10 and produce progressive lossy decompression interpretable as a generalized autoregressive decoder.
+Introduces denoising diffusion probabilistic models (DDPMs), showing that a parameterized Markov chain trained with variational inference can reverse a fixed Gaussian diffusion process to generate high-quality images. A novel epsilon-prediction parameterization connects diffusion models to denoising score matching and annealed Langevin dynamics, yielding a simplified weighted training objective. Achieves state-of-the-art FID 3.17 on CIFAR10 and introduces progressive lossy compression interpretation generalizing autoregressive decoding.
 
 ## Contributions
-- Shows diffusion probabilistic models can synthesize high-quality images, achieving FID 3.17 on unconditional CIFAR10 and matching ProgressiveGAN on LSUN 256x256.
-- Introduces epsilon-prediction parameterization that connects diffusion models to denoising score matching across noise scales and to annealed Langevin dynamics during sampling.
-- Simplifies the variational bound into an unweighted mean-squared error objective (L_simple) that improves sample quality despite hurting log-likelihood.
-- Demonstrates that diffusion models are progressive lossy compressors; their sampling chain generalizes autoregressive decoding to a continuous bit-ordering.
-- Provides an ablation showing that predicting the noise with fixed variances and the simplified objective outperforms predicting the posterior mean or learning variances.
+- First demonstration that diffusion probabilistic models can synthesize high-quality images, reaching FID 3.17 and IS 9.46 on unconditional CIFAR10, surpassing most published GAN results.
+- Derives an epsilon-prediction reparameterization of the reverse process that is equivalent to denoising score matching over multiple noise levels and to annealed Langevin dynamics during sampling.
+- Proposes a simplified, unweighted mean-squared-error training objective (L_simple) that improves sample quality over the full variational bound, and shows fixed variances outperform learned diagonal variances.
+- Interprets the variational bound as a progressive lossy compression scheme, showing diffusion models allocate most bits to imperceptible details and act as excellent lossy compressors.
+- Establishes a connection between Gaussian diffusion and autoregressive decoding with a generalized bit ordering that cannot be expressed by reordering data coordinates.
 
 ## Figures
 ![Figure 1](/figures/denoising-diffusion-probabilistic-models/figure_1.png)
@@ -68,17 +75,17 @@ This paper makes diffusion probabilistic models practical for high-quality image
 ![Page 1](/figures/denoising-diffusion-probabilistic-models/page_1.png)
 
 ## Critical Analysis
-**Novel Insight**: *prior:* Diffusion models were known only as a theoretical latent-variable framework; they had not been shown to produce competitive samples, and their training objective seemed disconnected from practical generative quality. / *update:* By predicting the noise and optimizing a simplified mean-squared error, diffusion training becomes equivalent to denoising score matching, yielding state-of-the-art sample quality; sampling corresponds to annealed Langevin dynamics, and the model behaves as a progressive lossy compressor.
+**Novel Insight**: *prior:* Diffusion probabilistic models were known since Sohl-Dickstein et al. (2015) but had no demonstrated ability to generate high-quality samples; score matching and variational Markov-chain training were seen as distinct approaches, and training used learned variances and the true variational bound. / *update:* Predicting the noise epsilon with a simplified unweighted MSE objective, rather than the posterior mean with a full variational bound, makes diffusion models match GAN sample quality; this objective is equivalent to denoising score matching and to variational training of a Langevin-like sampler, unifying both lines.
 
-**Fundamental Limitations**: Log-likelihoods are not competitive with likelihood-based models; most bits describe imperceptible details. Sampling requires T=1000 sequential network evaluations, which is slow. Learned reverse-process variances were unstable, and the simplified objective is heuristic despite empirical success.
+**Fundamental Limitations**: Log-likelihoods are not competitive with likelihood-based models (e.g., sparse transformers); sampling requires T=1000 sequential network evaluations, making it slow; learned variance parameterization was unstable; most bits in lossless coding describe imperceptible details, making the model better as a lossy compressor than a likelihood model.
 
-**Research Frontier**: Further work can improve likelihoods, accelerate sampling, apply diffusion models to other modalities, and deepen the connection to score-based generative modeling. The paper's progressive decoding view suggests new orderings for autoregressive-type generation.
+**Research Frontier**: Making diffusion models fast to sample (fewer steps, distillation, or non-Markovian processes), closing the likelihood gap with autoregressive/flow models, extending beyond images (audio, video, 3D), integrating diffusion components into larger generative systems, and theoretically characterizing the generalized bit ordering and progressive-compression view.
 
 ## Relations
-The paper takes Sohl-Dickstein et al.'s diffusion probabilistic models, which had not demonstrated high-quality samples, and makes them practical by introducing a noise-prediction reparameterization and a simplified weighted variational bound. It explicitly connects diffusion models to denoising score matching and annealed Langevin dynamics (Song & Ermon), and to autoregressive decoding via progressive lossy compression. This work established the modern denoising diffusion line, later extended by faster samplers such as DDIM.
+Building directly on Sohl-Dickstein et al.'s nonequilibrium thermodynamics framework, this paper transforms diffusion models from a theoretical construction to a practical, state-of-the-art generative model. It also formalizes a bridge to Song & Ermon's denoising score matching and annealed Langevin dynamics, and it reinterprets the variational bound as progressive lossy compression, generalizing autoregressive decoding. This work supersedes the earlier perception of diffusion models as impractical and underpins later works such as DDIM.
 
-- **builds-on** [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]] — Extends the original diffusion probabilistic model formulation from a theoretical construct to a state-of-the-art generative model.
-
+- **builds-on** [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]] — Extends Sohl-Dickstein et al.'s diffusion probabilistic models from toy examples to high-quality image synthesis, introducing the epsilon-prediction parameterization and simplified objective that make
+- **impacts** [[denoising-diffusion-implicit-models]] — Provides the foundational diffusion framework that DDIM later accelerates by introducing implicit sampling, inheriting the noise schedule and training objective.
 ## Citations
 _1 of 72 citations linked to compiled papers._
 

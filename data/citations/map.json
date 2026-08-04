@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-04T20:09:50.910Z",
+  "updatedAt": "2026-08-04T20:41:14.562Z",
   "papers": {
     "deep-unsupervised-learning-using-nonequilibrium-thermodynamics": {
       "slug": "deep-unsupervised-learning-using-nonequilibrium-thermodynamics",
@@ -10,7 +10,7 @@
         "Bengio, Y., Mesnil, G., Dauphin, Y., and Rifai, S. Better Mixing via Deep Representations. arXiv preprint arXiv:1207.4404, July 2012.",
         "Bergstra, J. and Breuleux, O. Theano: a CPU and GPU math expression compiler. Proceedings of the Python for Scientific Computing Conference (SciPy), 2010.",
         "Besag, J. Statistical Analysis of Non-Lattice Data. The Statistician, 24(3), 179-195, 1975.",
-        "Bishop, C., Svensén, M., and Williams, C. GTM: The generative topographic mapping. Neural computation, 1998.",
+        "Bishop, C., Svens´en, M., and Williams, C. GTM: The generative topographic mapping. Neural computation, 1998.",
         "Bornschein, J. and Bengio, Y. Reweighted Wake-Sleep. International Conference on Learning Representations, June 2015.",
         "Burda, Y., Grosse, R. B., and Salakhutdinov, R. Accurate and Conservative Estimates of MRF Log-likelihood using Reverse Annealing. arXiv:1412.8566, December 2014.",
         "Dayan, P., Hinton, G. E., Neal, R. M., and Zemel, R. S. The helmholtz machine. Neural computation, 7(5):889–904, 1995.",
@@ -22,7 +22,7 @@
         "Gregor, K., Danihelka, I., Mnih, A., Blundell, C., and Wierstra, D. Deep AutoRegressive Networks. arXiv preprint arXiv:1310.8499, October 2013.",
         "Grosse, R. B., Maddison, C. J., and Salakhutdinov, R. Annealing between distributions by averaging moments. In Advances in Neural Information Processing Systems, pp. 2769–2777, 2013.",
         "Hinton, G. E. Training products of experts by minimizing contrastive divergence. Neural Computation, 14(8):1771–1800, 2002.",
-        "Hinton, G. E. The wake-sleep algorithm for unsupervised neural networks ). Science, 1995.",
+        "Hinton, G. E. The wake-sleep algorithm for unsupervised neural networks. Science, 1995.",
         "Hyvärinen, A. Estimation of non-normalized statistical models using score matching. Journal of Machine Learning Research, 6:695–709, 2005.",
         "Jarzynski, C. Equilibrium free-energy differences from nonequilibrium measurements: A master-equation approach. Physical Review E, January 1997.",
         "Jarzynski, C. Equalities and inequalities: irreversibility and the second law of thermodynamics at the nanoscale. Annu. Rev. Condens. Matter Phys., 2011.",
@@ -62,7 +62,7 @@
         "Welling, M. and Hinton, G. A new learning algorithm for mean field Boltzmann machines. Lecture Notes in Computer Science, January 2002.",
         "Yao, L., Ozair, S., Cho, K., and Bengio, Y. On the Equivalence Between Deep NADE and Generative Stochastic Networks. In Machine Learning and Knowledge Discovery in Databases, pp. 322–336. Springer, 2014."
       ],
-      "generatedAt": "2026-08-04T20:09:38.351Z",
+      "generatedAt": "2026-08-04T20:40:54.588Z",
       "provider": "deepseek",
       "model": "deepseek-v4-flash",
       "citations": []
@@ -112,7 +112,7 @@
         "Sergey Zagoruyko and Nikos Komodakis. Wide residual networks. arXiv preprint arXiv:1605.07146, May 2016.",
         "Shengjia Zhao, Hongyu Ren, Arianna Yuan, Jiaming Song, Noah Goodman, and Stefano Ermon. Bias and generalization in deep generative models: An empirical study. In Advances in Neural Information Processing Systems, pp. 10792–10801, 2018."
       ],
-      "generatedAt": "2026-08-04T20:09:43.711Z",
+      "generatedAt": "2026-08-04T20:41:08.481Z",
       "provider": "deepseek",
       "model": "deepseek-v4-flash",
       "citations": [
@@ -202,7 +202,7 @@
         "Fisher Yu, Yinda Zhang, Shuran Song, Ari Seff, and Jianxiong Xiao. LSUN: Construction of a large-scale image dataset using deep learning with humans in the loop. arXiv preprint arXiv:1506.03365, 2015.",
         "Sergey Zagoruyko and Nikos Komodakis. Wide residual networks. arXiv preprint arXiv:1605.07146, 2016."
       ],
-      "generatedAt": "2026-08-04T20:09:50.910Z",
+      "generatedAt": "2026-08-04T20:41:14.562Z",
       "provider": "deepseek",
       "model": "deepseek-v4-flash",
       "citations": [

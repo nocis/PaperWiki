@@ -1,20 +1,21 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-04T20:09:28.912Z",
+  "updatedAt": "2026-08-04T20:40:45.762Z",
   "topics": [
     {
       "slug": "diffusion-probabilistic-models",
       "name": "Diffusion Probabilistic Models",
-      "definition": "Generative models that learn to reverse a gradual noising process. A forward process (Markovian or non-Markovian) progressively destroys data structure into a simple noise distribution, while a learned reverse process restores structure. Training optimizes a variational bound on log likelihood, often reparameterized as denoising score matching, yielding tractable sampling, log-likelihood evaluati…",
+      "definition": "Generative models that define a data distribution as the endpoint of a Markov chain which gradually destroys structure through forward diffusion, and learn a reverse diffusion process to restore it; DDPMs make this practical with a variational-trained reparameterized reverse chain for high-quality synthesis, and later generalizations replace the Markovian forward process with non-Markovian proces…",
       "mode": "standalone",
       "parentSlug": null,
       "children": [],
       "subtopics": [],
       "tags": [
-        "generative models",
-        "deep unsupervised learning",
-        "probabilistic inference",
-        "diffusion processes"
+        "deep generative models",
+        "diffusion probabilistic models",
+        "unsupervised learning",
+        "nonequilibrium thermodynamics",
+        "density estimation"
       ],
       "sources": [
         "deep-unsupervised-learning-using-nonequilibrium-thermodynamics",
@@ -34,18 +35,18 @@
         "Niru Maheswaranathan",
         "Surya Ganguli"
       ],
-      "venue": "ICML 2015 (JMLR: W&CP volume 37)",
+      "venue": "ICML 2015 (JMLR W&CP volume 37)",
       "publishedAt": "2015-07",
       "tags": [
         "year/2015-07",
-        "venue/ICML-2015-(JMLR:-W&CP-volume-37)"
+        "venue/ICML-2015-(JMLR-W&CP-volume-37)"
       ],
       "milestone": "diffusion-probabilistic-models",
       "subtopic": null,
       "numPages": 18,
       "addedAt": "2026-08-04",
       "url": "/pdfs/deep-unsupervised-learning-using-nonequilibrium-thermodynamics.pdf",
-      "essence": "Introduces diffusion probabilistic models, a class of deep generative models inspired by nonequilibrium thermodynamics. A forward Markov chain gradually corrupts data into simple noise; a learned reverse chain restores structure, defining a highly flexible distribution that remains exactly sampleable and analytically tractable. Training maximizes a lower bound on log likelihood, reducing density estimation to regression on per-time-step diffusion kernel parameters; demonstrated on toy, binary, and image datasets including state-of-the-art dead leaves likelihood.",
+      "essence": "Introduces diffusion probabilistic models: a generative model is defined as the endpoint of a Markov chain that gradually destroys structure in a data distribution through forward diffusion, while a learned reverse diffusion restores it. Training maximizes a tractable lower bound on log likelihood by estimating small per-step perturbations, enabling exact sampling and cheap likelihood evaluation. The framework scales to thousands of layers and supports posterior computations such as denoising and inpainting.",
       "figures": [
         "figure_1.png",
         "figure_10.png",
@@ -84,7 +85,7 @@
       "numPages": 22,
       "addedAt": "2026-08-04",
       "url": "/pdfs/denoising-diffusion-implicit-models.pdf",
-      "essence": "DDIMs generalize DDPMs to a family of non-Markovian forward processes that share the same training objective. By choosing a deterministic generative process (σ→0), they produce high-quality samples 10–50× faster, enable semantically meaningful latent-space interpolation, and allow near-lossless reconstruction via an ODE-like sampling procedure. The paper unifies DDPM and score-based sampling under a variational inference perspective.",
+      "essence": "DDIMs generalize denoising diffusion probabilistic models to a family of non-Markovian forward processes whose marginals match DDPM's, reusing the same training objective and pretrained networks. By choosing a deterministic generative process (implicit model), they turn sampling into ODE-like integration, yielding 10x-50x faster generation, latent-space consistency, meaningful interpolation, and low-error reconstruction.",
       "figures": [
         "figure_1.png",
         "figure_10.png",
@@ -104,9 +105,14 @@
       "citedBy": [],
       "relations": [
         {
-          "relation": "builds-on",
+          "relation": "extends",
           "slug": "deep-unsupervised-learning-using-nonequilibrium-thermodynamics",
-          "note": "Generalizes the Markovian diffusion forward process introduced there to a family of non-Markovian processes with the same surrogate training objective."
+          "note": "Generalizes the diffusion probabilistic framework to non-Markovian forward processes, enabling accelerated sampling while preserving the same marginals and training objective."
+        },
+        {
+          "relation": "contradicts",
+          "slug": "deep-unsupervised-learning-using-nonequilibrium-thermodynamics",
+          "note": "Shows that Markovianity of the forward diffusion is not necessary; non-Markovian processes with the same marginals yield faster samplers without retraining."
         }
       ]
     },
@@ -129,7 +135,7 @@
       "numPages": 25,
       "addedAt": "2026-08-04",
       "url": "/pdfs/denoising-diffusion-probabilistic-models.pdf",
-      "essence": "This paper makes diffusion probabilistic models practical for high-quality image synthesis. It reparameterizes the reverse process to predict the noise, connects the training objective to denoising score matching, and uses a simplified weighted variational bound. The resulting models achieve state-of-the-art FID on CIFAR10 and produce progressive lossy decompression interpretable as a generalized autoregressive decoder.",
+      "essence": "Introduces denoising diffusion probabilistic models (DDPMs), showing that a parameterized Markov chain trained with variational inference can reverse a fixed Gaussian diffusion process to generate high-quality images. A novel epsilon-prediction parameterization connects diffusion models to denoising score matching and annealed Langevin dynamics, yielding a simplified weighted training objective. Achieves state-of-the-art FID 3.17 on CIFAR10 and introduces progressive lossy compression interpretation generalizing autoregressive decoding.",
       "figures": [
         "figure_1.png",
         "figure_10.png",
@@ -151,7 +157,7 @@
         {
           "relation": "builds-on",
           "slug": "deep-unsupervised-learning-using-nonequilibrium-thermodynamics",
-          "note": "Extends the original diffusion probabilistic model formulation from a theoretical construct to a state-of-the-art generative model."
+          "note": "Extends Sohl-Dickstein et al.'s diffusion probabilistic models from toy examples to high-quality image synthesis, introducing the epsilon-prediction parameterization and simplified objective that make the framework practical."
         }
       ]
     }

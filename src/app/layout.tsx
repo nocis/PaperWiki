@@ -4,13 +4,17 @@ import "./globals.css";
 import { LlmPrefsProvider } from "@/components/LlmPrefsProvider";
 import LlmStatusBanner from "@/components/LlmStatusBanner";
 import NavLlmSelect from "@/components/NavLlmSelect";
+import NavLinks from "@/components/NavLinks";
+import { readPieces } from "@/lib/knowledge";
 
 export const metadata: Metadata = {
   title: "PaperWiki",
   description: "LLM-compiled personal research-paper knowledge base",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const pieces = await readPieces();
+
   return (
     <html lang="en">
       <body className="min-h-screen bg-gray-50 text-gray-900">
@@ -20,18 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <Link href="/" className="text-lg font-semibold">
                 PaperWiki
               </Link>
-              <Link href="/wiki" className="text-sm text-gray-600 hover:text-gray-900">
-                Wiki
-              </Link>
-              <Link href="/chat" className="text-sm text-gray-600 hover:text-gray-900">
-                Chat
-              </Link>
-              <Link href="/citations" className="text-sm text-gray-600 hover:text-gray-900">
-                Citations
-              </Link>
-              <Link href="/health" className="text-sm text-gray-600 hover:text-gray-900">
-                Health
-              </Link>
+              <NavLinks pieceCount={pieces.length} />
               <div className="ml-auto">
                 <NavLlmSelect />
               </div>

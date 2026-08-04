@@ -34,3 +34,13 @@
 
 ## [2026-08-04] citations | citedBy reciprocity
 - updated 2 paper(s)
+
+## [2026-08-04] relations | Denoising Diffusion Implicit Models
+- slug: denoising-diffusion-implicit-models
+- relations: 2 → 3
+- provider: deepseek · model: deepseek-v4-flash
+
+## [2026-08-04] relations | Denoising Diffusion Probabilistic Models
+- slug: denoising-diffusion-probabilistic-models
+- relations: 1 → 2
+- provider: deepseek · model: deepseek-v4-flash

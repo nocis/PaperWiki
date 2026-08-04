@@ -74,18 +74,18 @@ export default function AddToKnowledgeButton({
   }
 
   return (
-    <span className={`inline-flex items-center gap-2 ${className}`}>
+    <div className={`flex min-w-0 flex-1 flex-wrap items-center gap-2 ${className}`}>
       <input
         value={topic}
         onChange={(event) => setTopic(event.target.value)}
         placeholder="Topic hint (optional, comma-separated)"
-        className="w-44 rounded border border-gray-300 px-2 py-1 text-xs text-gray-800 outline-none focus:border-blue-500"
+        className="min-w-0 flex-1 basis-40 rounded border border-gray-300 px-2 py-1 text-xs text-gray-800 outline-none focus:border-blue-500"
       />
       <button
         type="button"
         onClick={() => void add()}
         disabled={busy}
-        className="rounded bg-blue-700 px-2 py-1 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-50"
+        className="flex-none rounded bg-blue-700 px-2 py-1 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-50"
       >
         {busy ? "Saving…" : "Save"}
       </button>
@@ -96,11 +96,11 @@ export default function AddToKnowledgeButton({
           setTopic("");
           setError(null);
         }}
-        className="text-xs text-gray-400 hover:text-gray-700"
+        className="flex-none text-xs text-gray-400 hover:text-gray-700"
       >
         Cancel
       </button>
-      {error && <span className="text-xs text-red-600">{error}</span>}
-    </span>
+      {error && <span className="w-full flex-none text-xs text-red-600">{error}</span>}
+    </div>
   );
 }
