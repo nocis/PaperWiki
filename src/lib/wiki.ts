@@ -136,6 +136,13 @@ export interface WikiDb {
   proposals: Proposal[];
 }
 
+export interface LogEntry {
+  date: string;
+  operation: string;
+  title: string;
+  details: string[];
+}
+
 // ---------------------------------------------------------------------------
 // Slugs & text helpers
 // ---------------------------------------------------------------------------
@@ -391,6 +398,30 @@ export async function regenIndex(db: WikiDb, language = "en"): Promise<void> {
 export async function appendLog(operation: string, title: string, details: string[] = []): Promise<void> {
   const entry = [`## [${today()}] ${operation} | ${title}`, ...details.map((d) => `- ${d}`), ""].join("\n");
   await fs.appendFile(LOG_MD, "\n" + entry);
+}
+
+export async function readLog(): Promise<LogEntry[]> {
+  let content: string;
+  try {
+    content = await fs.readFile(LOG_MD, "utf8");
+  } catch {
+    return [];
+  }
+
+  const entries: LogEntry[] = [];
+  const header = /^## \[([^\]]+)\] ([^|]+) \| (.+)$/;
+  let current: LogEntry | null = null;
+  for (const line of content.split("\n")) {
+    const match = line.trim().match(header);
+    if (match) {
+      if (current) entries.push(current);
+      current = { date: match[1], operation: match[2].trim(), title: match[3].trim(), details: [] };
+    } else if (current && line.trim().startsWith("- ")) {
+      current.details.push(line.trim().slice(2));
+    }
+  }
+  if (current) entries.push(current);
+  return entries.reverse();
 }
 
 const PROPOSAL_RE = /^- \[(pending|applied|rejected)\] (\d{4}-\d{2}-\d{2}) \| ([^|]+) \| topic: ([^|]+) \| subtopic: ([^|]+) \| reason: (.*)$/;

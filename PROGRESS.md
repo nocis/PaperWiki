@@ -6,14 +6,15 @@
 ## Current Status
 
 **Phase A (compiler + API + scaffold): code COMPLETE. Verification: PARTIAL.**
+**Phase B (UI): code COMPLETE. Verification: MANUAL verification pending.**
 
 - ✅ LLM pre-flight health check verified working (`tsx` one-shot test passed).
-- ⏳ `yarn build` (typecheck) — NOT yet run.
+- ⏳ `yarn build` (typecheck) — started once, then stopped; run manually.
 - ⏳ End-to-end `yarn compile` — NOT yet run. **3 real arXiv PDFs are already
   sitting in `papers/new/` waiting**: `1503.03585v8.pdf`, `2006.11239v2.pdf`,
   `2010.02502v4.pdf`.
 - ⏳ Comment API curl smoke test — NOT yet run.
-- 🔜 Phase B (all UI) — NOT started.
+- ✅ Phase B UI implementation complete; production build and browser smoke tests remain manual.
 
 ## Quick Resume
 
@@ -88,11 +89,41 @@ data/wiki-db.json           # derived index (seeded empty)
 - Gateway models available: deepseek-v4-flash/pro, glm-5.1/5.2, gpt-5.6-luna,
   grok-4.5, kimi-k2.6/k2.7-code/k3, minimax-m2.7/m3, qwen3.6/3.7, hy3, mimo-v2.5(-pro).
 
-## Phase B Scope (remaining)
+## Phase B Scope (implemented)
 
-1. `src/components/WikiMarkdown.tsx` — react-markdown + remark-gfm + `[[slug]]` → route links (paper slugs → `/paper/[slug]`, else `/wiki/...`).
-2. `/` dashboard — topic tree (mode-aware) w/ synthesis blurbs, recent-ingest timeline from `log.md`, proposals badge.
+1. `src/components/WikiMarkdown.tsx` — react-markdown + remark-gfm + `[[slug]]` route links.
+2. `/` dashboard — mode-aware topic tree with synthesis blurbs, recent-ingest timeline, and proposals badge.
 3. `/wiki/[[...path]]/page.tsx` — renders any `wiki/*.md`.
-4. `/paper/[slug]/page.tsx` — tabs **Annotate** (70/30 `PdfViewer` + `CommentSidebar`, highlight→popup→POST, click→jump, delete) and **Wiki** (paper md page; references as links). Viewer must be `next/dynamic` ssr:false; configure pdfjs worker (`pdfjs-dist@3.11.174`).
-5. `/chat` + `POST /api/chat` — retrieval call (`queryRetrievePrompt` over `SCHEMA.md`+`index.md`) → answer call (`buildAnswerMessages`); model dropdown; ephemeral localStorage state; non-streaming.
-6. `yarn build` + full smoke test.
+4. `/paper/[slug]/page.tsx` — Annotate/Wiki tabs; 70/30 PDF viewer and comment sidebar; highlight→popup→POST, click→jump, and delete.
+5. `/chat` + `POST /api/chat` — retrieval then answer pipeline; model dropdown; localStorage state; non-streaming.
+6. Manual `yarn build` and full smoke test remain outstanding.
+
+### Phase B Files Added
+
+- `src/components/annotation-types.ts`
+- `src/components/AnnotatePanel.tsx`
+- `src/components/ChatPanel.tsx`
+- `src/components/CommentSidebar.tsx`
+- `src/components/PaperTabs.tsx`
+- `src/components/PdfViewer.tsx`
+- `src/app/chat/page.tsx`
+- `src/app/api/chat/route.ts`
+- `public/pdf.worker.min.js` (matches the nested `react-pdf-highlighter` pdfjs `2.16.105` runtime)
+
+`@tailwindcss/typography` was not installed or registered; dependency installation was intentionally left for manual handling.
+
+### Phase B UI polish (readability pass)
+
+- `WikiMarkdown` no longer depends on the typography plugin — it styles every markdown element
+  directly (headings, paragraphs, lists, links, code, blockquote, tables) so `wiki/*`, paper Wiki
+  tab, and chat answers are readable out of the box.
+- `/wiki/[[...path]]` now renders a centered readable column (max-w-3xl) with a metadata header:
+  topic badge + mode, definition lead, tag chips; paper pages get authors/venue/date + reader link.
+- `/paper/[slug]` header replaced button row with metadata chips (venue, date, pages, topic,
+  subtopic, raw PDF, wiki source).
+- Annotate: PDF toolbar with page count + zoom selector (`pdfScaleValue`), custom selection tip
+  (textarea popover → POST), note popover cards (page, excerpt quote, comment, date, delete),
+  softer highlight tint + scrolled-to emphasis via `globals.css` overrides.
+- Comment sidebar: height-matched scrollable column, page/date chips, quoted excerpt, hover-reveal
+  delete, richer empty state.
+

@@ -1,3 +1,27 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Inline code chips inside fenced code blocks should not be styled like inline code. */
+.wiki-md pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+/* PDF highlight tint — specificity must beat react-pdf-highlighter's bundled styles. */
+.Highlight .Highlight__part {
+  background: rgba(253, 224, 71, 0.45);
+  border-radius: 1px;
+}
+.Highlight .Highlight__part:hover {
+  background: rgba(250, 204, 21, 0.7);
+}
+.Highlight.Highlight--scrolledTo .Highlight__part {
+  background: rgba(245, 158, 11, 0.75);
+}
+.PdfHighlighter__tip-container {
+  font-family: inherit;
+}
