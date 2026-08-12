@@ -160,7 +160,11 @@ export default async function Dashboard() {
         </div>
       </div>
 
-      {pendingFiles.length > 0 && <PendingCompilePanel files={pendingFiles} initialStatus={compileStatus} />}
+      {/* Panel shows while the inbox has papers, a run is live, or a run just
+          finished (the completion summary stays until the user dismisses it). */}
+      {(pendingFiles.length > 0 || (compileStatus && compileStatus.status !== "idle")) && (
+        <PendingCompilePanel files={pendingFiles} initialStatus={compileStatus} />
+      )}
 
       {db.papers.length === 0 ? (
         <p className="rounded-xl border border-dashed border-gray-300 bg-white p-8 text-gray-500">

@@ -58,12 +58,17 @@ you and the maintainer.
    `papers/compiled/<slug>.pdf` (flat). On abort, unprocessed PDFs stay in the inbox.
 3. **Canonical naming from the real title.** Dropped filenames are irrelevant —
    including arXiv ids like `2006.11239.pdf`. The compile slug is derived from
-   the paper's REAL title (LLM-extracted → PDF metadata → filename fallback),
-   and it names everything: `papers/compiled/<slug>.pdf`, `wiki/papers/<slug>.md`,
+   the paper's REAL title (LLM-extracted → PDF metadata → dedicated LLM
+   title-extraction retry → `untitled-<filename>` when no title exists, e.g.
+   scanned PDFs). `untitled-*` slugs are flagged by lint for manual renaming.
+   The slug names everything: `papers/compiled/<slug>.pdf`, `wiki/papers/<slug>.md`,
    `comments/<slug>/`, `/pdfs/<slug>.pdf`.
 4. **Duplicates are non-fatal skips.** If a dropped file resolves to an
-   already-compiled slug, it is moved to `papers/duplicates/` and the run
-   continues. Only LLM/processing failures abort a run.
+   already-compiled slug, the LLM compares the new paper's title + essence
+   against the existing paper's: a confirmed same paper is moved to
+   `papers/duplicates/` and the run continues; a distinct paper is compiled
+   under a disambiguated slug (e.g. `title-2017`). Only LLM/processing
+   failures abort a run.
 5. **Flat archive, stable URLs.** PDFs live flat in `papers/compiled/` and are
    served at `/pdfs/<slug>.pdf` by the app. Topic reorganizations never move PDFs.
 6. **Wikilinks in body only.** Body text uses `[[slug]]` (resolved to app routes
@@ -80,8 +85,8 @@ you and the maintainer.
    violations.
 10. **Lint tiers.** Mechanical violations (reciprocal `cites`/`citedBy`,
     Feeds milestone sync, pruning broken figure references) are auto-fixed and
-    logged; structural recommendations (split/promote/tag-to-parent) are queued
-    in `wiki/proposals.md`, never auto-applied.
+    logged; structural recommendations (split/promote/tag-to-parent/merge-topic)
+    are queued in `wiki/proposals.md`, never auto-applied.
 
 ## Page formats
 
@@ -137,13 +142,18 @@ inline `### <Subtopic>` sections (merged mode), `## Chronological Evolution`
 - **split parent** (subtopic >= 5 papers): children get own files.
 - Granularity: > 8 sources must split; 3–8 judgment; < 3 keep.
 - Tag-to-parent: 3+ standalone topics sharing a tag → merged-parent candidate.
+- Merge-topic: when a compile creates a topic, an LLM pass over the whole tree
+  surfaces near-duplicate topics (same research direction, overlapping
+  definitions) as merge candidates.
 - All split/merge/promote operations are **Confirm-tier**: detected by compile,
   queued in `wiki/proposals.md`, never auto-applied.
 
 ### Classification fitness check
 A source's core research question must genuinely fall within the topic's
 milestone definition. Shared keywords do NOT imply shared research questions.
-If the connection is indirect, create a new standalone topic — misclassification
+Creation is the exception: before choosing "create", the model must name the
+1-3 closest existing topics and state why each fails the fitness check. If the
+connection is indirect, create a new standalone topic — misclassification
 is worse than a small new topic.
 
 ## Conventions
@@ -170,33 +180,43 @@ is worse than a small new topic.
 ### 1. Ingesting a source (compile: `yarn compile`)
 
 Code drives the pipeline (see `scripts/compile.ts`); you own the decisions.
-Per paper, in order:
+Compilation is sequential and incremental: each paper is compiled against the
+full state left by the previous one. A source stays in `papers/new/` until its
+compile run fully succeeds. Per paper, in order:
 
-1. **Pre-flight**: verify LLM connectivity. A source stays in `papers/new/`
-   until its compile run fully succeeds.
-2. **Extract** the PDF text; if extraction fails, the paper is skipped (never
-   aborts the run — except LLM/processing failures, which fail hard).
-3. **Extract figures** (PyMuPDF, best-effort, never aborts). Co-locate with
-   the archive per invariant 9.
-4. **Analyze + classify** (LLM, one merged call): derive the real title (slug
-   from it), essence, contributions as deltas, a contrastive Novel Insight
-   (`prior → update`), complete verbatim reference list, critical analysis,
-   relation context, and the topic assignment — honoring the classification
-   fitness check and topic granularity rules. Relations are persisted both as
-   `relations[]` frontmatter and in the `## Relations` body.
-5. **Resolve citations** (LLM): match reference entries to already-compiled
-   papers only — title strongly similar AND year/authors consistent; never
-   approximate. Write `cites[]`/`citedBy[]` reciprocally.
+1. **Pre-flight**: verify LLM connectivity.
+2. **Extract** the PDF text (full document, window-bounded); if extraction
+   fails, the paper is skipped (never aborts the run — except LLM/processing
+   failures, which fail hard).
+3. **Extract title + essence** (LLM, slim): the dedup key, decided before any
+   deep analysis. One dedicated retry on garbage titles; the canonical slug
+   derives from the real title, never the dropped filename.
+4. **Dedup screen** (LLM, slim): the title+essence are compared against the
+   compiled-history record (title+essence only, relevance-bounded). This is
+   the SINGLE duplicate decision: a same-document confidence of at least 0.9
+   moves the PDF to `papers/duplicates/` — or, when the matched paper's
+   compiled PDF is missing, RESTORES it (interrupted run recovery). Below 0.9
+   the paper compiles; a slug collision then means a distinct same-name
+   paper, compiled under a disambiguated slug. Duplicates never pay for deep
+    analysis, figures, or synthesis.
+5. **Analyze + classify** (LLM, deep, full text): title+essence are passed in
+   as fixed facts; the call derives contributions as deltas, a contrastive
+   Novel Insight (`prior → update`), the complete verbatim reference list,
+   critical analysis, relation context, and the topic assignment — honoring
+   the classification fitness check and topic granularity rules. Relations
+   are persisted both as `relations[]` frontmatter and in the `## Relations`
+   body.
 6. **Write the paper page** (template-owned format), synthesize the topic
-   (compounding — see Writing discipline), write/update the topic page,
-   move the PDF to `papers/compiled/`, rebuild derived files (index + db +
-   citation map).
-7. **Finalize relations** (LLM, end of run): one slim call per compiled paper
-   re-maps typed relations against the FULL final index — the analyze pass
-   saw only the pre-run index. Seeds are kept unless wrong, same-run papers
-   are discovered, output is validated code-side (known slugs, no self,
-   allowed types, dedupe), and the `## Relations` body block is patched in
-   place.
+   (compounding — the new source plus the newest sources; see Writing
+   discipline), write/update the topic page, move the PDF to
+   `papers/compiled/`, rebuild derived files (index + db + citation map).
+7. **Finalize citations and relations** (LLM, end of run): one slim call per
+   compiled paper re-maps typed relations against the FULL final index, and
+   the citation map matches bibliography entries to compiled papers only —
+   title strongly similar AND year/authors consistent; never approximate.
+   Seeds are kept unless wrong, same-run papers are discovered, output is
+   validated code-side (known slugs, no self, allowed types, dedupe), and the
+   `## Relations`/`## Citations` body blocks are patched in place.
 8. **Verify** every write against invariant 7 (bidirectional links) and
    invariant 9 (figures).
 

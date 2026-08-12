@@ -63,13 +63,15 @@ export function LlmPrefsProvider({ children }: { children: React.ReactNode }) {
   const [availability, setAvailability] = useState<LlmAvailability | null>(null);
   const [availabilityState, setAvailabilityState] = useState<AvailabilityState>("unknown");
   const prefsRef = useRef(prefs);
+  const catalogRef = useRef(catalog);
 
   prefsRef.current = prefs;
+  catalogRef.current = catalog;
 
-  const loadCatalog = useCallback(async () => {
+  const loadCatalog = useCallback(async (refresh = false) => {
     setCatalogError(null);
     try {
-      const data = await fetchLlmCatalog();
+      const data = await fetchLlmCatalog(refresh);
       setCatalog(data);
       setPrefsState((current) => sanitizePrefs(current, data));
     } catch (err) {
@@ -91,12 +93,21 @@ export function LlmPrefsProvider({ children }: { children: React.ReactNode }) {
       const result = await fetchAvailability(provider, model);
       setAvailability(result);
       setAvailabilityState(result.state);
+      // A successful re-check means the provider is reachable; if the catalog
+      // entry is still stale (no key / no models / fetch error), force a fresh
+      // catalog load so "(no key)" and "No models available" actually update.
+      if (result.state === "available") {
+        const entry = catalogRef.current?.providers.find((p) => p.id === provider);
+        if (entry && (!entry.keySet || entry.models.length === 0 || entry.modelsError)) {
+          void loadCatalog(true);
+        }
+      }
     } catch (err) {
       setAvailability(null);
       setAvailabilityState("unavailable");
       setAvailability({ state: "unavailable", kind: "other", error: err instanceof Error ? err.message : String(err), provider, model, checkedAt: new Date().toISOString() });
     }
-  }, []);
+  }, [loadCatalog]);
 
   // Re-check on mount and whenever the selection changes.
   useEffect(() => {
@@ -158,7 +169,7 @@ export function LlmPrefsProvider({ children }: { children: React.ReactNode }) {
         setPrefs,
         catalog,
         catalogError,
-        retryCatalog: loadCatalog,
+        retryCatalog: () => void loadCatalog(true),
         availability,
         availabilityState,
         checkNow,

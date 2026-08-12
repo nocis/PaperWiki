@@ -40,8 +40,8 @@ export interface ProviderModelPrefs {
 /** No client-side defaults — the server catalog decides. */
 export const EMPTY_PREFS: ProviderModelPrefs = { provider: "", model: "" };
 
-export async function fetchLlmCatalog(): Promise<LlmCatalog> {
-  const res = await fetch("/api/llm", { cache: "no-store" });
+export async function fetchLlmCatalog(refresh = false): Promise<LlmCatalog> {
+  const res = await fetch(refresh ? "/api/llm?refresh=1" : "/api/llm", { cache: "no-store" });
   if (!res.ok) throw new Error(`model catalog request failed with HTTP ${res.status}`);
   return (await res.json()) as LlmCatalog;
 }

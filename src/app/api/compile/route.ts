@@ -1,5 +1,7 @@
-import { spawn } from "child_process";
+import { spawn, type ChildProcess } from "child_process";
 import { NextRequest, NextResponse } from "next/server";
+import * as fs from "fs/promises";
+import * as path from "path";
 import {
   COMPILE_STEP_CATALOG,
   createCompileRunId,
@@ -17,15 +19,27 @@ export const dynamic = "force-dynamic";
 
 const MAX_OUTPUT_CHARS = 200_000;
 
+const COMPILE_OUTPUT_LOG = path.join(process.cwd(), ".log", "compile-output.log");
+
+function forwardOutput(chunk: Buffer | string): void {
+  process.stdout.write(chunk.toString());
+  fs.appendFile(COMPILE_OUTPUT_LOG, chunk.toString()).catch(() => {
+    /* log persistence is best-effort */
+  });
+}
+
 type CompileResult = {
   ok: boolean;
   exitCode: number | null;
   output: string;
 };
 
-type ActiveCompile = {
+export type ActiveCompile = {
   runId: string;
+  child: ChildProcess;
   promise: Promise<CompileResult>;
+  /** True once the child exited or failed to start (set on "close"/"error"). */
+  settled: boolean;
 };
 
 declare global {
@@ -38,9 +52,16 @@ function appendOutput(current: string, chunk: Buffer | string): string {
   return (current + chunk.toString()).slice(-MAX_OUTPUT_CHARS);
 }
 
-function runCompile(runId: string, provider: string, model: string): Promise<CompileResult> {
-  return new Promise((resolve) => {
-    const child = spawn("yarn", ["compile"], {
+function runCompile(runId: string, provider: string, model: string): {
+  child: ChildProcess;
+  promise: Promise<CompileResult>;
+} {
+  // Spawn the compiler directly with node --import tsx — no `yarn` indirection
+  // (no PATH dependence, works identically on all platforms without a shell).
+  const child = spawn(
+    process.execPath,
+    ["--import", "tsx", path.join(process.cwd(), "scripts", "compile.ts")],
+    {
       cwd: process.cwd(),
       env: {
         ...process.env,
@@ -49,15 +70,19 @@ function runCompile(runId: string, provider: string, model: string): Promise<Com
         WIKI_LLM_PROVIDER: provider,
         WIKI_LLM_MODEL: model,
       },
-      shell: process.platform === "win32",
-    });
+    }
+  );
 
+  const promise = new Promise<CompileResult>((resolve) => {
     let output = "";
+    fs.appendFile(COMPILE_OUTPUT_LOG, `\n===== compile run ${runId} @ ${new Date().toISOString()} =====\n`).catch(() => {});
     child.stdout.on("data", (chunk) => {
       output = appendOutput(output, chunk);
+      forwardOutput(chunk);
     });
     child.stderr.on("data", (chunk) => {
       output = appendOutput(output, chunk);
+      forwardOutput(chunk);
     });
     child.on("error", (err) => {
       resolve({ ok: false, exitCode: null, output: appendOutput(output, `${err.message}\n`) });
@@ -66,6 +91,8 @@ function runCompile(runId: string, provider: string, model: string): Promise<Com
       resolve({ ok: code === 0, exitCode: code, output });
     });
   });
+
+  return { child, promise };
 }
 
 function runningSnapshot(runId: string): CompileRunSnapshot {
@@ -85,7 +112,14 @@ function runningSnapshot(runId: string): CompileRunSnapshot {
 export async function GET() {
   const active = globalThis.__paperwikiCompile;
   const snapshot = await readEffectiveCompileStatus();
-  const status = active && snapshot?.runId !== active.runId ? runningSnapshot(active.runId) : snapshot;
+  // Only a genuinely alive child is reported as "running"; a dead/hung one
+  // must surface its persisted (terminal) status instead of a fake running.
+  const activeAlive =
+    active !== undefined &&
+    !active.settled &&
+    active.child.exitCode === null &&
+    active.child.signalCode === null;
+  const status = activeAlive && snapshot?.runId !== active.runId ? runningSnapshot(active.runId) : snapshot;
 
   return NextResponse.json({
     status: status ?? {
@@ -100,10 +134,30 @@ export async function GET() {
   });
 }
 
-/** POST /api/compile — start the fixed `yarn compile` command in the background. */
+/** POST /api/compile — start the fixed compile command in the background. */
 export async function POST(request: NextRequest) {
-  if (globalThis.__paperwikiCompile) {
-    return NextResponse.json({ error: "compile is already running" }, { status: 409 });
+  // Only a genuinely alive process keeps the slot. A dead/hung child (exited,
+  // or never started) must not block retries: formally fail its run if the
+  // persisted snapshot still claims "running", then clear and proceed.
+  const existingActive = globalThis.__paperwikiCompile;
+  if (existingActive) {
+    const alive =
+      !existingActive.settled &&
+      existingActive.child.exitCode === null &&
+      existingActive.child.signalCode === null;
+    const snapshot = await readCompileStatus();
+    const snapshotTerminal = snapshot !== null && snapshot.status !== "running";
+    if (alive && !snapshotTerminal) {
+      return NextResponse.json({ error: "compile is already running" }, { status: 409 });
+    }
+    if (!snapshotTerminal) {
+      await markCompileProcessFinished({
+        runId: existingActive.runId,
+        ok: false,
+        message: "The previous compile process ended before it could mark the run complete.",
+      });
+    }
+    globalThis.__paperwikiCompile = undefined;
   }
 
   // A stale "running" snapshot from a dead run must not block a new one.
@@ -151,8 +205,14 @@ export async function POST(request: NextRequest) {
   const runId = createCompileRunId();
   await startCompileRun({ runId, source: "ui", provider: provider.id, model });
 
-  const compilePromise = runCompile(runId, provider.id, model);
-  const active: ActiveCompile = { runId, promise: compilePromise };
+  const { child, promise: compilePromise } = runCompile(runId, provider.id, model);
+  const active: ActiveCompile = { runId, child, promise: compilePromise, settled: false };
+  child.on("close", () => {
+    active.settled = true;
+  });
+  child.on("error", () => {
+    active.settled = true;
+  });
   globalThis.__paperwikiCompile = active;
 
   void compilePromise

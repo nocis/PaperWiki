@@ -40,8 +40,10 @@ export function figureLabel(file: string): string {
  */
 export async function extractFigures(pdfPath: string, slug: string): Promise<FigureInfo[]> {
   const outDir = FIGURES_DIR_FOR(slug);
+  console.log(`  · figures: extracting for "${slug}" (timeout ${TIMEOUT_MS / 1000}s)`);
+  let stderr = "";
   try {
-    await execFileAsync("bash", [
+    const result = await execFileAsync("bash", [
       FIGURES_SCRIPT,
       pdfPath,
       outDir,
@@ -53,20 +55,33 @@ export async function extractFigures(pdfPath: string, slug: string): Promise<Fig
       String(MAX_DIM),
       "--render-page1",
     ], { timeout: TIMEOUT_MS });
+    stderr = result.stderr;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.warn(`  ! figures skipped for "${slug}": ${message}`);
+    const detail = typeof err === "object" && err !== null && "stderr" in err
+      ? String((err as { stderr?: unknown }).stderr ?? "").trim()
+      : "";
+    const timeoutNote = typeof err === "object" && err !== null && "killed" in err && err.killed
+      ? ` (killed after ${TIMEOUT_MS / 1000}s timeout)`
+      : "";
+    console.warn(`  ! figures skipped for "${slug}": ${message}${timeoutNote}${detail ? `\n${detail}` : ""}`);
     return [];
+  }
+
+  for (const line of stderr.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed) console.log(`  · [figures] ${trimmed}`);
   }
 
   let files: string[];
   try {
     files = await fs.readdir(outDir);
   } catch {
-    return [];
+    files = [];
   }
-  return files
+  const images = files
     .filter((f) => /\.(png|jpe?g|webp)$/i.test(f))
-    .sort()
-    .map((file) => ({ file, url: `/figures/${slug}/${file}` }));
+    .sort();
+  console.log(`  · figures: ${images.length} figure(s) for "${slug}"`);
+  return images.map((file) => ({ file, url: `/figures/${slug}/${file}` }));
 }

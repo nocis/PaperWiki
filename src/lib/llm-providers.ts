@@ -7,6 +7,7 @@
  * API keys are NEVER stored here; each provider declares which env var holds
  * its key, and only server-side code reads the actual value.
  */
+import { httpJsonRequest, type HttpJsonResult } from "./llm-http";
 
 export interface LLMProviderDef {
   /** Stable id used in URLs, storage, and CLI args. */
@@ -65,25 +66,34 @@ export interface LlmCatalogPayload {
 
 /** Fetch the provider's live model list from its OpenAI-compatible /models. */
 async function fetchProviderModels(provider: LLMProviderDef, key: string): Promise<string[]> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
+  const base = process.env.WIKI_LLM_BASE_URL ?? provider.baseUrl;
+  const url = `${base}/models`;
+  // Deliberately NOT global fetch — see src/lib/llm-http.ts (undici connect
+  // can hang with ETIMEDOUT on AAAA-hosts when the host lacks an IPv6 route).
+  let res: HttpJsonResult;
   try {
-    const base = process.env.WIKI_LLM_BASE_URL ?? provider.baseUrl;
-    const res = await fetch(`${base}/models`, {
+    res = await httpJsonRequest({
+      url,
       headers: { authorization: `Bearer ${key}` },
-      signal: controller.signal,
+      timeoutMs: 10_000,
     });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-    const body = (await res.json()) as { data?: { id?: unknown }[] };
-    const models = (body.data ?? [])
-      .map((m) => (typeof m.id === "string" ? m.id : null))
-      .filter((id): id is string => id !== null && id.length > 0);
-    return models.sort((a, b) => a.localeCompare(b));
-  } finally {
-    clearTimeout(timeout);
+  } catch (err) {
+    const e = err as { message?: string; code?: string };
+    throw new Error(`${e.message ?? String(err)}${e.code ? ` (${e.code})` : ""} — GET ${url}`);
   }
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`HTTP ${res.status} — GET ${url}`);
+  }
+  let body: { data?: { id?: unknown }[] };
+  try {
+    body = JSON.parse(res.text) as { data?: { id?: unknown }[] };
+  } catch {
+    throw new Error(`malformed JSON from — GET ${url}`);
+  }
+  const models = (body.data ?? [])
+    .map((m) => (typeof m.id === "string" ? m.id : null))
+    .filter((id): id is string => id !== null && id.length > 0);
+  return models.sort((a, b) => a.localeCompare(b));
 }
 
 // Catalog is cached server-side; the live fetch happens at most once per TTL.
@@ -94,10 +104,11 @@ let catalogCache: { at: number; value: LlmCatalogPayload } | null = null;
  * Client-safe catalog payload for GET /api/llm. Model lists are fetched live
  * from each provider's /models endpoint (parallel, per-provider failures are
  * isolated); nothing is bundled client-side or assumed ahead of the fetch.
+ * Pass `force` to bypass the TTL cache (e.g. after a successful re-check).
  */
-export async function publicCatalog(): Promise<LlmCatalogPayload> {
+export async function publicCatalog(force = false): Promise<LlmCatalogPayload> {
   const now = Date.now();
-  if (catalogCache && now - catalogCache.at < CATALOG_TTL_MS) {
+  if (!force && catalogCache && now - catalogCache.at < CATALOG_TTL_MS) {
     return catalogCache.value;
   }
 

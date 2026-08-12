@@ -82,29 +82,36 @@ against the literature as supported, contradicted, or unaddressed.
 
 ### 3.2 Compilation pipeline
 
-Per paper, in order:
+Compilation is sequential and incremental: each paper is compiled against the
+full state left by the previous one, so the knowledge base grows one paper at
+a time. Compile failures are fail-hard (processed papers persist; the rest
+stay in the inbox). Per paper, in order:
 
-1. **Extraction** — PDF text and page count; figures extracted separately as
-   a best-effort step that never aborts the run.
-2. **Analysis and classification** (one merged LLM call) — real title,
-   essence, contributions as deltas, contrastive novel insight, verbatim
-   bibliography, critical analysis, typed relations to papers in the current
-   index, and topic assignment subject to the fitness check.
-3. **Slug resolution** — canonical naming derived from the real title,
-   independently of the dropped filename.
-4. **Citation matching** — a slim LLM call maps bibliography entries to
-   compiled papers; matching is exact-title-and-authors, never approximate.
-5. **Topic synthesis** — the topic page is compounded with the new source;
-   earlier insights are retained, not restated from scratch.
-6. **Relation finalization** (end of run) — because the analysis pass
-   observed a partial index, one slim call per compiled paper re-maps typed
-   relations against the complete final index; results are validated
-   code-side and the relations block is patched in place.
-7. **Derived-file rebuild** — index, database, and citation map are
-   regenerated atomically.
+| # | Step | Type | Purpose |
+|---|------|------|---------|
+| 1 | Load state | code | Current derived database |
+| 2 | Duplicate check (filename) | code | Exact re-drops under the same name → `papers/duplicates/`, free |
+| 3 | Extract PDF | code | Full text, every page (capped at ~1M chars) |
+| 4 | Extract title + essence | LLM (slim) | The dedup key, decided *before* any deep analysis; one retry on garbage titles |
+| 5 | Resolve title slug | code | Canonical slug from the real title, independent of the filename |
+| 6 | Dedup screen | LLM (slim) | The single duplicate decision: title+essence vs a relevance-bounded history record; same-document score ≥ 0.9 → `papers/duplicates/` (or restores an interrupted paper's compiled PDF); below → compiles, disambiguated if its slug collides |
+| 7 | Analyze + classify | LLM (deep) | Full paper text; title+essence passed in as fixed facts; contributions, contrastive novel insight, verbatim bibliography, typed relations, topic assignment |
+| 8 | Citation map | code | Persist the raw reference list (matching runs end-of-run) |
+| 9 | Figures | code | Best-effort, never aborts the run |
+| 10–12 | Topic apply, page write | code | Milestone/skeleton, paper page |
+| 13 | Topic synthesis | LLM | Topic page compounds the NEW source + newest sources; earlier insights retained |
+| 14–16 | Topic page, move PDF, comments, rebuild | code | Fresh topic body, archive, comments dir, index/db rebuild |
 
-Compile failures are fail-hard; duplicate detections are non-fatal skips
-moved to `papers/duplicates/`.
+Duplicates pay only steps 1–6 (one slim LLM call) — never the deep analysis,
+figures, or synthesis. The 0.9 decision line is conservative: a paper is only
+moved aside when the LLM is quite sure. Interrupted runs self-heal: a page
+written without its PDF is detected by the screen and restored on the next
+compile.
+
+Context budgets (see `scripts/compile.ts`): full paper text, a
+relevance-ordered KB index, and the topic tree are each bounded by named
+constants sized for a 1M-token model window — the KB index effectively covers
+every compiled paper until the window is exhausted.
 
 ### 3.3 Typed relations
 

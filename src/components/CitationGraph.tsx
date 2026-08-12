@@ -61,8 +61,6 @@ const PALETTE = [
   "#4f46e5",
 ];
 
-const WIDTH = 900;
-const HEIGHT = 600;
 const ITERATIONS = 350;
 
 interface SimNode {
@@ -92,7 +90,23 @@ export default function CitationGraph({
   const [filter, setFilter] = useState<EdgeFilter>("all");
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Clicking a node pins the neighborhood highlight (hover that persists).
+  const [pinnedId, setPinnedId] = useState<string | null>(null);
   const [edgeTip, setEdgeTip] = useState<{ kind: string; title: string; note?: string; x: number; y: number } | null>(null);
+
+  // The highlight target is the pinned node when set, else the hovered node.
+  const highlightId = pinnedId ?? hoveredId;
+
+  // Canvas grows with the node count so labels stay readable; the container
+  // scrolls instead of shrinking the whole graph.
+  const canvas = useMemo(() => {
+    const n = Math.max(1, nodes.length);
+    const cols = Math.max(1, Math.ceil(Math.sqrt(n)));
+    return {
+      width: Math.max(900, cols * 220),
+      height: Math.max(600, Math.ceil(n / cols) * 200),
+    };
+  }, [nodes.length]);
 
   const colorByGroup = useMemo(() => {
     const groups = [...new Set(nodes.map((n) => n.group))];
@@ -155,8 +169,8 @@ export default function CitationGraph({
       const angle = (i / Math.max(1, nodes.length)) * Math.PI * 2;
       return {
         ...n,
-        x: WIDTH / 2 + Math.cos(angle) * Math.min(240, 60 + nodes.length * 6) + (Math.random() - 0.5) * 40,
-        y: HEIGHT / 2 + Math.sin(angle) * Math.min(240, 60 + nodes.length * 6) + (Math.random() - 0.5) * 40,
+        x: canvas.width / 2 + Math.cos(angle) * Math.min(240, 60 + nodes.length * 6) + (Math.random() - 0.5) * 40,
+        y: canvas.height / 2 + Math.sin(angle) * Math.min(240, 60 + nodes.length * 6) + (Math.random() - 0.5) * 40,
         vx: 0,
         vy: 0,
         degree: degreeById.get(n.id) ?? 0,
@@ -201,8 +215,8 @@ export default function CitationGraph({
         sim[b].vy -= fy;
       }
       for (const n of sim) {
-        n.vx += (WIDTH / 2 - n.x) * gravity;
-        n.vy += (HEIGHT / 2 - n.y) * gravity;
+        n.vx += (canvas.width / 2 - n.x) * gravity;
+        n.vy += (canvas.height / 2 - n.y) * gravity;
         n.vx *= damping;
         n.vy *= damping;
         n.x += n.vx;
@@ -212,7 +226,7 @@ export default function CitationGraph({
 
     setPositions(new Map(sim.map((n) => [n.id, { x: n.x, y: n.y }])));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, links, relationLinks, degreeById]);
+  }, [nodes, links, relationLinks, degreeById, canvas.width, canvas.height]);
 
   if (!positions) {
     return <div className="flex h-[600px] items-center justify-center text-sm text-gray-500">Laying out citation graph…</div>;
@@ -254,11 +268,21 @@ export default function CitationGraph({
       </div>
 
       <div className="flex flex-col gap-4 lg:flex-row">
+        <div className="max-h-[80vh] overflow-auto rounded-lg border border-gray-200 bg-white lg:flex-1">
         <svg
-          viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-          className="w-full rounded-lg border border-gray-200 bg-white lg:flex-1"
+          viewBox={`0 0 ${canvas.width} ${canvas.height}`}
+          width={canvas.width}
+          height={canvas.height}
+          className="block"
           role="img"
           aria-label="Citation and relation graph"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setSelectedId(null);
+              setPinnedId(null);
+              setEdgeTip(null);
+            }
+          }}
         >
           <defs>
             <marker id="citation-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -279,7 +303,7 @@ export default function CitationGraph({
             const dy = target.y - source.y;
             const dist = Math.sqrt(dx * dx + dy * dy) || 1;
             const inset = 12;
-            const dimmed = hoveredId !== null && link.source !== hoveredId && link.target !== hoveredId;
+            const dimmed = highlightId !== null && link.source !== highlightId && link.target !== highlightId;
             return (
               <line
                 key={`${link.source}-${link.target}-${index}`}
@@ -288,7 +312,7 @@ export default function CitationGraph({
                 x2={target.x - (dx / dist) * inset}
                 y2={target.y - (dy / dist) * inset}
                 stroke="#9ca3af"
-                strokeWidth={hoveredId !== null && !dimmed ? 2 : 1}
+                strokeWidth={highlightId !== null && !dimmed ? 2 : 1}
                 opacity={dimmed ? 0.06 : 0.35}
                 markerEnd="url(#citation-arrow)"
                 className="cursor-pointer"
@@ -325,14 +349,14 @@ export default function CitationGraph({
             const endLen = Math.hypot(endTx, endTy) || 1;
             const ex = target.x - (endTx / endLen) * (radiusOf(link.target) + 5);
             const ey = target.y - (endTy / endLen) * (radiusOf(link.target) + 5);
-            const dimmed = hoveredId !== null && link.source !== hoveredId && link.target !== hoveredId;
+            const dimmed = highlightId !== null && link.source !== highlightId && link.target !== highlightId;
             return (
               <path
                 key={`rel-${link.kind}-${link.source}-${link.target}-${index}`}
                 d={`M ${sx} ${sy} Q ${cx} ${cy} ${ex} ${ey}`}
                 fill="none"
                 stroke={style.stroke}
-                strokeWidth={hoveredId !== null && !dimmed ? 2.4 : style.width}
+                strokeWidth={highlightId !== null && !dimmed ? 2.4 : style.width}
                 opacity={dimmed ? 0.06 : 0.6}
                 strokeDasharray={style.dash}
                 markerEnd={`url(#rel-arrow-${link.kind})`}
@@ -351,13 +375,17 @@ export default function CitationGraph({
             const radius = Math.min(16, 7 + degree * 1.4);
             const color = colorByGroup.get(node.group) ?? PALETTE[0];
             const neighbors = neighborsOf.get(node.id) ?? new Set<string>();
-            const dimmed = hoveredId !== null && node.id !== hoveredId && !neighbors.has(hoveredId);
+            const dimmed = highlightId !== null && node.id !== highlightId && !neighbors.has(highlightId);
             const label = node.label.length > 16 ? `${node.label.slice(0, 15)}…` : node.label;
             return (
               <g
                 key={node.id}
                 className="cursor-pointer"
-                onClick={() => setSelectedId(node.id)}
+                onClick={() => {
+                  const toggle = selectedId === node.id ? null : node.id;
+                  setSelectedId(toggle);
+                  setPinnedId(toggle);
+                }}
                 onMouseEnter={() => {
                   setHoveredId(node.id);
                 }}
@@ -391,6 +419,7 @@ export default function CitationGraph({
             );
           })}
         </svg>
+        </div>
 
         {/* Node info panel */}
         {selectedPaper && (
@@ -399,7 +428,7 @@ export default function CitationGraph({
               <Link href={`/paper/${selectedPaper.slug}`} className="text-sm font-semibold text-gray-950 hover:text-blue-700">
                 {selectedPaper.title}
               </Link>
-              <button type="button" onClick={() => setSelectedId(null)} className="text-xs text-gray-400 hover:text-gray-700" aria-label="Close panel">
+              <button type="button" onClick={() => { setSelectedId(null); setPinnedId(null); }} className="text-xs text-gray-400 hover:text-gray-700" aria-label="Close panel">
                 ✕
               </button>
             </div>
@@ -508,7 +537,8 @@ export default function CitationGraph({
       <p className="mt-3 text-xs text-gray-400">
         Nodes are compiled papers (colored by topic). Solid arrows are citations (citing → cited); colored
         arrows are LLM-typed relations (source → target). Filter edges by category; hover a node to highlight
-        its neighborhood, hover an edge for its note, click a node for details, use ✕ to close the panel.
+        its neighborhood, click a node to pin the highlight and open details (click again, the ✕, or empty
+        graph space to release), hover an edge for its note. Scroll the graph when it outgrows the viewport.
       </p>
     </div>
   );

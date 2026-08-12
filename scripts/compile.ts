@@ -5,21 +5,25 @@
  *
  * Semantics (see wiki/SCHEMA.md):
  * - papers/new/ is the work queue: every PDF in it is this run's goal.
- * - Pre-flight LLM check; if unreachable, abort before touching anything.
- * - Per PDF, TWO LLM calls: (1) a merged analyze + classification pass over
- *   the raw text (reference list extraction included — EVERY bibliography
- *   entry, no truncation), then (2) topic synthesis once the topic page is
- *   selected code-side. All else is code: slug resolution, figure extraction,
- *   page writes, index/derive.
- * - Citations: the reference list extracted in the merged call is persisted
- *   to data/citations/map.json mid-run. After ALL papers of the run are
+ * - Sequential, fail-hard, incremental: each paper compiles against the FULL
+ *   state left by the previous one; the first LLM failure aborts the run.
+ * - Per PDF (in order): (1) slim title+essence call — the dedup key;
+ *   (2) slim dedup screen — title+essence vs the compiled-history record; a
+ *   same-document score >= DEDUP_SAME_SCORE moves the PDF to
+ *   papers/duplicates/ (or restores an interrupted paper's compiled PDF);
+ *   below it the paper compiles, disambiguated if its slug collides. Only
+ *   then: (3) the deep analysis + classification call on the full text
+ *   (title+essence are passed in as fixed facts, bibliography included),
+ *   then (4) topic synthesis.
+ * - Citations: the reference list extracted by the deep call is persisted to
+ *   data/citations/map.json mid-run. After ALL papers of the run are
  *   compiled, an end-of-run finalize pass runs ONE slim citation call per
  *   paper against the FULL final index (see remapPaperCitations) — the map
  *   entry, the ## Citations section, cites[] and the global citedBy[] are
  *   derived from that pass, so the citation relation is built at compile
  *   time with no manual rebuild.
- * - Any LLM failure mid-run aborts the run: processed papers persist,
- *   unprocessed PDFs stay in the inbox for the next run.
+ * - Inputs are window-bounded: full paper text (FULL_MAX_CHARS), KB context
+ *   (KB_BUDGET_CHARS, relevance-ordered), topic tree (TOPIC_TREE_BUDGET_CHARS).
  */
 import * as fs from "fs/promises";
 import * as path from "path";
@@ -77,10 +81,17 @@ import {
   updateCompileRun,
 } from "../src/lib/runs";
 import {
+  DEDUP_SAME_SCORE,
+  dedupScreenPrompt,
   paperMergedPrompt,
+  titleEssencePrompt,
+  topicMergePrompt,
   topicSynthesisPrompt,
   type Classification,
+  type DedupScreen,
   type PaperMergedResponse,
+  type TitleEssence,
+  type TopicMergePair,
   type TopicSynthesis,
 } from "../src/lib/prompts";
 
@@ -89,6 +100,20 @@ import {
 // ---------------------------------------------------------------------------
 
 const LANGUAGE = "en";
+
+// ---------------------------------------------------------------------------
+// Pipeline budgets (one place, tuned for a 1M-token / 384K-max-output model)
+// ---------------------------------------------------------------------------
+
+/** KB context budget shared by the deep call's relation index and the dedup screen's history slice (~75k tokens at ~4 chars/token). */
+const KB_BUDGET_CHARS = 300_000;
+/** Classification input budget for the topic tree (~25k tokens). */
+const TOPIC_TREE_BUDGET_CHARS = 100_000;
+/** Deep analysis call output bound (defensive; realistic need is well below). */
+const DEEP_MAX_TOKENS = 65_536;
+const TITLE_ESSENCE_MAX_TOKENS = 4_096;
+const SCREEN_MAX_TOKENS = 1_024;
+const SYNTH_MAX_TOKENS = 16_384;
 
 function parseArgs(argv: string[]): { provider?: string; model?: string } {
   const out: { provider?: string; model?: string } = {};
@@ -114,13 +139,81 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Compact KB context for the analysis prompt (bounded). */
-function kbIndexText(db: WikiDb): string {
-  const lines: string[] = [];
-  for (const p of db.papers.slice(0, 40)) {
-    lines.push(`- ${p.slug} — "${p.title}" (${p.venue}, ${p.publishedAt}): ${truncate(p.essence, 160)}`);
+/** A name carries no title signal when it is empty, pure digits ("0.pdf"), or an arXiv id ("2006.11239"). */
+function isGarbageName(candidate: string): boolean {
+  return !candidate || /^\d+$/.test(candidate) || /^\d{4}\.\d{4,5}(v\d+)?$/.test(candidate);
+}
+
+/**
+ * Canonical slug from the real title. Chain: LLM title → PDF metadata title →
+ * dedicated-retry title → meaningful filename → "untitled-<filename>" (garbage
+ * filenames only — flagged by lint).
+ */
+function resolveTitleSlug(llmTitle: string, metaTitle: string, retriedTitle: string, filenameSlug: string): string {
+  for (const t of [llmTitle, metaTitle, retriedTitle]) {
+    const s = slugify(t);
+    if (!isGarbageName(s)) return s;
   }
-  return lines.join("\n");
+  return !isGarbageName(filenameSlug) ? filenameSlug : `untitled-${filenameSlug || `paper-${Date.now()}`}`;
+}
+
+/** Title-token overlap (Jaccard over normalized tokens); higher = more similar. */
+function titleOverlap(a: string, b: string): number {
+  const tokens = (s: string): Set<string> =>
+    new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
+  const A = tokens(a);
+  const B = tokens(b);
+  if (A.size === 0 || B.size === 0) return 0;
+  let inter = 0;
+  for (const t of A) if (B.has(t)) inter += 1;
+  return inter / (A.size + B.size - inter);
+}
+
+/**
+ * Papers ordered for LLM context: title-similarity first, recency as tiebreak
+ * (insertion order ≈ chronological). The bounded slice is decided by the caller.
+ */
+function orderByRelevance<T extends { title: string }>(papers: T[], incomingTitle: string): T[] {
+  return papers
+    .map((p, i) => ({ p, score: titleOverlap(p.title, incomingTitle) - i / 1e6 }))
+    .sort((a, b) => b.score - a.score)
+    .map(({ p }) => p);
+}
+
+/** Fill a budgeted context block: consume lines until the char budget is exhausted. */
+function buildBudgeted(lines: string[], budgetChars: number): string {
+  const out: string[] = [];
+  let used = 0;
+  for (const line of lines) {
+    if (used + line.length + 1 > budgetChars) break;
+    out.push(line);
+    used += line.length + 1;
+  }
+  return out.join("\n");
+}
+
+/** Compact, relevance-ordered KB context for the deep analysis prompt. */
+function kbIndexText(db: WikiDb, incomingTitle: string): string {
+  const lines = orderByRelevance(db.papers, incomingTitle).map(
+    (p) => `- ${p.slug} — "${p.title}" (${p.venue}, ${p.publishedAt}): ${truncate(p.essence, 160)}`
+  );
+  return buildBudgeted(lines, KB_BUDGET_CHARS);
+}
+
+/**
+ * Compact history record for the dedup screen: title + essence only.
+ * Forced slugs (e.g. the slug-collision candidate) are guaranteed a seat.
+ */
+function historyRecordSlice(db: WikiDb, incomingTitle: string, forcedSlugs: string[]): string {
+  const forced = forcedSlugs.map((s) => db.papers.find((p) => p.slug === s)).filter((p): p is DbPaper => !!p);
+  const rest = orderByRelevance(
+    db.papers.filter((p) => !forced.some((f) => f.slug === p.slug)),
+    incomingTitle
+  );
+  const lines = [...forced, ...rest].map(
+    (p) => `- ${p.slug} — "${p.title}" — ${truncate(p.essence, 200)}`
+  );
+  return buildBudgeted(lines, KB_BUDGET_CHARS);
 }
 
 /** Compact topic tree for the classification prompt (bounded). */
@@ -134,12 +227,11 @@ function topicTreeText(db: WikiDb): string {
     }
     return d;
   };
-  return db.topics
-    .map(
-      (t) =>
-        `- ${t.slug} (depth ${depth(t.slug)}, mode ${t.mode}${t.subtopics.length ? `, subtopics: ${t.subtopics.join(", ")}` : ""}) — ${truncate(t.definition, 140)}`
-    )
-    .join("\n");
+  const lines = db.topics.map(
+    (t) =>
+      `- ${t.slug} (depth ${depth(t.slug)}, mode ${t.mode}${t.subtopics.length ? `, subtopics: ${t.subtopics.join(", ")}` : ""}) — ${truncate(t.definition, 140)}`
+  );
+  return buildBudgeted(lines, TOPIC_TREE_BUDGET_CHARS);
 }
 
 function venueTag(venue: string): string | null {
@@ -227,10 +319,10 @@ async function processPdf(
   // --- Load current state -------------------------------------------------
   const db = await runCompileStep("load-state", "Load current wiki state", () => deriveDb(), paperCtx);
 
-  // --- Cheap pre-analysis duplicate guard (meaningful filenames) ----------
+  // --- Cheap pre-analysis duplicate guard (exact filename re-drops) ----------
   const preAnalysisDuplicate = await runCompileStep(
     "duplicate-check",
-    "Check for duplicate paper",
+    "Check for duplicate paper (filename)",
     async () => db.papers.find((p) => p.slug === filenameSlug)?.slug ?? null,
     paperCtx
   );
@@ -251,75 +343,138 @@ async function processPdf(
     return null;
   }
 
-  // --- Extract ------------------------------------------------------------
+  // --- Extract (full text, all pages) ---------------------------------------
   const extracted = await runCompileStep("extract-pdf", "Extract PDF text", () => extractPdf(pdfPath), paperCtx);
   console.log(`  extracted ${extracted.numPages} pages`);
 
-  // --- LLM call 1: analyze + citations + classify (ONE merged call) ---------
-  // The reference list, citation records, and classification all derive from
-  // the raw paper text — extracted in a single round-trip. Classification and
-  // citation records are validated code-side right after.
-  const merged = await runCompileStep(
-    "analyze-classify",
-    "Analyze, classify, and build citations with LLM",
+  // --- LLM 1: title + essence (the dedup key, decided before deep analysis) --
+  // One slim call on the full text. A garbage title triggers ONE dedicated
+  // retry (filename + metadata hint are already in the prompt). If both fail,
+  // the resolve step falls back to metadata/filename and lint flags the result.
+  const phaseA: TitleEssence = { title: "", essence: "" };
+  let retriedTitle = "";
+  await runCompileStep(
+    "extract-title-essence",
+    "Extract title and essence with LLM",
     async () => {
-      const prompt = paperMergedPrompt({
-        text: extracted.text,
-        metaTitle: extracted.metaTitle,
-        kbIndex: kbIndexText(db),
-        topicTree: topicTreeText(db),
-        language: LANGUAGE,
-      });
-      const raw = await llmJson<PaperMergedResponse>({
+      const first = await llmJson<TitleEssence>({
         provider,
         model,
-        ...prompt,
-        maxTokens: 16000,
+        ...titleEssencePrompt({
+          text: extracted.text,
+          metaTitle: extracted.metaTitle,
+          filename: basename,
+          language: LANGUAGE,
+        }),
+        maxTokens: TITLE_ESSENCE_MAX_TOKENS,
         temperature: 0.2,
       });
-      return {
-        ...raw,
-        classification: validateClassification(raw.classification, db),
-      };
+      phaseA.title = first?.title ?? "";
+      phaseA.essence = first?.essence ?? "";
+      if (!isGarbageName(slugify(phaseA.title)) || extracted.text.trim().length === 0) return;
+      const retried = await llmJson<TitleEssence>({
+        provider,
+        model,
+        ...titleEssencePrompt({
+          text: extracted.text,
+          metaTitle: extracted.metaTitle,
+          filename: basename,
+          language: LANGUAGE,
+        }),
+        maxTokens: TITLE_ESSENCE_MAX_TOKENS,
+        temperature: 0,
+      });
+      if (!isGarbageName(slugify(retried?.title ?? ""))) {
+        console.log(`  Title:        ${retried.title} (dedicated extraction)`);
+        retriedTitle = retried?.title ?? "";
+      }
     },
     paperCtx
   );
-  const analysis = merged;
 
-  // --- Phase 2: report ------------------------------------------------------
-  console.log(`  Title:        ${analysis.title}`);
-  console.log(`  Lead:         ${truncate(analysis.essence, 300)}`);
-  console.log(`  Positioning:  ${analysis.evolutionaryChain?.role ?? "?"} — ${truncate(analysis.evolutionaryChain?.note ?? "", 160)}`);
-  console.log(`  Contribution: ${truncate(analysis.contributions[0] ?? "(none)", 200)}`);
-  console.log(`  Limitation:   ${truncate(analysis.limitations, 160)}`);
-  console.log(
-    `  Topic:        ${analysis.classification.action === "create" ? `(new) ${analysis.classification.topic!.slug}` : analysis.classification.topicSlug}${analysis.classification.subtopicSlug ? ` / ${analysis.classification.subtopicSlug}` : ""} — ${truncate(analysis.classification.reason, 140)}`
-  );
-
-  // --- Canonical slug from the REAL title -----------------------------------
-  // Files dropped as e.g. "2006.11239.pdf" are renamed to the paper's actual
-  // title. Fallback chain: LLM title -> PDF metadata title -> filename.
-  const { titleSlug, slug } = await runCompileStep(
+  // --- Canonical slug from the REAL title (code-only; the title is known) ----
+  // Fallback chain: LLM title -> PDF metadata title -> retry title -> meaningful
+  // filename -> "untitled-<filename>" (flagged by lint) only for garbage names.
+  const { titleSlug, collidingPaper } = await runCompileStep(
     "resolve-title-slug",
     "Resolve canonical title slug",
-    async () => {
-      const resolvedTitleSlug =
-        slugify(analysis.title ?? "") ||
-        slugify(extracted.metaTitle ?? "") ||
-        filenameSlug ||
-        `paper-${Date.now()}`;
-      const taken = new Set(db.papers.map((p) => p.slug));
-      return { titleSlug: resolvedTitleSlug, slug: uniqueSlug(resolvedTitleSlug, taken) };
+    () => {
+      const resolved = resolveTitleSlug(phaseA.title, extracted.metaTitle ?? "", retriedTitle, filenameSlug);
+      return { titleSlug: resolved, collidingPaper: db.papers.find((p) => p.slug === resolved) ?? null };
     },
     paperCtx
   );
+  let slug = titleSlug;
 
-  // Post-analysis duplicate guard: same paper re-dropped under a different name.
-  if (db.papers.some((p) => p.slug === titleSlug)) {
+  // --- LLM 2: dedup screen (title+essence vs compiled history) ---------------
+  // The screen is the SINGLE duplicate decision: score >= DEDUP_SAME_SCORE
+  // means "same document" (conservative — below it, the paper compiles).
+  // Colliding slugs are force-included in the record so the screen always
+  // sees the collision candidate. An inconclusive screen (invalid response)
+  // proceeds — a logged note, never a silent skip.
+  let screenMatch: { slug: string | null; score: number } = { slug: null, score: 0 };
+  if (phaseA.title.trim() || phaseA.essence.trim()) {
+    screenMatch = await runCompileStep(
+      "dedup-screen",
+      "Screen against compiled papers with LLM",
+      async () => {
+        const forced = collidingPaper ? [collidingPaper.slug] : [];
+        const record = historyRecordSlice(db, phaseA.title, forced);
+        const raw = await llmJson<DedupScreen>({
+          provider,
+          model,
+          ...dedupScreenPrompt({ title: phaseA.title, essence: phaseA.essence, record }),
+          maxTokens: SCREEN_MAX_TOKENS,
+          temperature: 0,
+        });
+        const valid =
+          !!raw &&
+          typeof raw === "object" &&
+          (raw.slug === null ||
+            (typeof raw.slug === "string" &&
+              typeof raw.score === "number" &&
+              raw.score >= 0 &&
+              raw.score <= 1 &&
+              db.papers.some((p) => p.slug === raw.slug)));
+        if (!valid) {
+          console.log("  ! dedup screen inconclusive (invalid response) — proceeding");
+          return { slug: null as string | null, score: 0 };
+        }
+        return { slug: raw.slug, score: raw.score };
+      },
+      { ...paperCtx, slug }
+    );
+  } else {
+    await recordCompileEvent({
+      ...paperCtx,
+      slug,
+      step: "dedup-screen",
+      label: "Screen against compiled papers with LLM",
+      status: "skipped",
+      message: "No title or essence extracted (scanned PDF?)",
+    });
+  }
+
+  // --- Duplicate verdict ------------------------------------------------------
+  const duplicateOf =
+    screenMatch.slug !== null && screenMatch.score >= DEDUP_SAME_SCORE ? screenMatch.slug : null;
+  if (duplicateOf) {
+    const why = `duplicate of "${duplicateOf}" (screen score ${screenMatch.score.toFixed(2)})`;
     await runCompileStep(
       "move-to-duplicates",
       "Move duplicate PDF aside",
-      () => moveToDuplicates(pdfPath, `already compiled as "${titleSlug}"`),
+      async () => {
+        // Interrupted-run recovery: the matched page may exist without its
+        // compiled PDF (a crash between write-paper-page and move-pdf) —
+        // restoring the inbox PDF completes that paper instead of misfiling it.
+        const target = path.join(PAPERS_COMPILED, `${duplicateOf}.pdf`);
+        if (!(await fs.stat(target).catch(() => null))) {
+          await fs.rename(pdfPath, target);
+          console.log(`  ! ${why} — restored compiled PDF for interrupted paper "${duplicateOf}"`);
+        } else {
+          await moveToDuplicates(pdfPath, why);
+        }
+      },
       { ...paperCtx, slug }
     );
     await recordCompileEvent({
@@ -328,17 +483,72 @@ async function processPdf(
       step: "paper-finished",
       label: "Paper skipped as duplicate",
       status: "skipped",
-      message: `Already compiled as "${titleSlug}"`,
+      message: `Screen confirmed ${why}`,
     });
     return null;
+  }
+
+  // Not a duplicate. A slug collision now means a DISTINCT paper sharing the
+  // name — compile it under a disambiguated slug; never overwrite the
+  // colliding paper's files.
+  if (collidingPaper && slug === titleSlug) {
+    slug = uniqueSlug(titleSlug, new Set(db.papers.map((p) => p.slug)));
+    if (slug !== titleSlug) {
+      console.log(`  Title collision with "${titleSlug}" — distinct paper, compiled as "${slug}"`);
+    }
   }
 
   if (slug !== filenameSlug) {
     console.log(`  Renamed:      ${basename} -> ${slug}.pdf`);
   }
 
+  // --- LLM 4: deep analysis + classification (full text) ---------------------
+  // Title + essence are fixed facts from phase A — the deep call builds on
+  // them and never re-derives them. Everything else (contributions, relations,
+  // bibliography, classification) is grounded in the full paper text.
+  const merged = await runCompileStep(
+    "analyze-classify",
+    "Analyze and classify with LLM",
+    async () => {
+      const prompt = paperMergedPrompt({
+        text: extracted.text,
+        metaTitle: extracted.metaTitle,
+        kbIndex: kbIndexText(db, phaseA.title),
+        topicTree: topicTreeText(db),
+        language: LANGUAGE,
+        knownTitle: phaseA.title,
+        knownEssence: phaseA.essence,
+      });
+      const raw = await llmJson<PaperMergedResponse>({
+        provider,
+        model,
+        ...prompt,
+        // Reasoning models spend budget on reasoning_content first — headroom
+        // is required or long-reasoning runs truncate to an empty content.
+        maxTokens: DEEP_MAX_TOKENS,
+        temperature: 0.2,
+      });
+      return {
+        ...raw,
+        classification: validateClassification(raw.classification, db),
+      };
+    },
+    { ...paperCtx, slug }
+  );
+  const analysis = merged;
+
+  // --- Phase 2: report ------------------------------------------------------
+  console.log(`  Title:        ${phaseA.title}`);
+  console.log(`  Lead:         ${truncate(phaseA.essence, 300)}`);
+  console.log(`  Positioning:  ${analysis.evolutionaryChain?.role ?? "?"} — ${truncate(analysis.evolutionaryChain?.note ?? "", 160)}`);
+  console.log(`  Contribution: ${truncate(analysis.contributions[0] ?? "(none)", 200)}`);
+  console.log(`  Limitation:   ${truncate(analysis.limitations, 160)}`);
+  console.log(
+    `  Topic:        ${analysis.classification.action === "create" ? `(new) ${analysis.classification.topic!.slug}` : analysis.classification.topicSlug}${analysis.classification.subtopicSlug ? ` / ${analysis.classification.subtopicSlug}` : ""} — ${truncate(analysis.classification.reason, 140)}`
+  );
+
   // --- Citation records: persisted raw list, records built at end-of-run ------
-  // The merged call extracts the FULL bibliography; normalization + matching
+  // The deep call extracts the FULL bibliography; normalization + matching
   // against the (complete) final index happens in the end-of-run finalize
   // pass (remapPaperCitations) so relations exist at compile time.
   const rawReferences = merged.references ?? [];
@@ -369,8 +579,7 @@ async function processPdf(
     console.log(`  Figures:      ${figures.map((f) => f.file).join(", ")}`);
   }
 
-  // --- LLM 2: classify ------------------------------------------------------
-  // Classification was validated inside the merged call; use it directly.
+  // --- LLM 5: classify (already validated inside the deep call) --------------
   const classification = merged.classification;
 
   // --- Frontmatter tags -------------------------------------------------------
@@ -379,16 +588,29 @@ async function processPdf(
   const vt = venueTag(analysis.venue ?? "");
   if (vt) tags.push(vt);
 
-  const milestone =
-    classification.action === "create" ? classification.topic!.slug : classification.topicSlug!;
-  const subtopic = classification.action === "assign" ? classification.subtopicSlug ?? null : null;
-
   // --- Apply classification to topic layer -----------------------------------
-  const topicPage = await runCompileStep(
+  // Topic page mutations (create/assign) are read-modify-writes; the
+  // create-collision re-check is defensive — a topic may have been created by
+  // an earlier run step since the analysis snapshot was taken.
+  const { topicPage, milestone, subtopic } = await runCompileStep(
     "apply-topic-classification",
     "Apply topic classification",
     async () => {
       const topicPages = await readTopicPages();
+
+      if (classification.action === "create" && topicPages.some((t) => t.fm.slug === classification.topic!.slug)) {
+        console.log(
+          `  Topic collision: "${classification.topic!.slug}" already exists — assigning this paper to it`
+        );
+        classification.action = "assign";
+        classification.topicSlug = classification.topic!.slug;
+        classification.subtopicSlug = null;
+      }
+
+      const milestone =
+        classification.action === "create" ? classification.topic!.slug : classification.topicSlug!;
+      const subtopic = classification.action === "assign" ? classification.subtopicSlug ?? null : null;
+
       let selectedTopicPage = topicPages.find((t) => t.fm.slug === milestone);
 
       if (classification.action === "create") {
@@ -416,6 +638,12 @@ async function processPdf(
           filePath: path.join(relDir, `${fm.slug}.md`),
           relPath: path.relative(WIKI_TOPICS_DIR, path.join(relDir, `${fm.slug}.md`)),
         };
+        // Write the topic skeleton NOW: the paper page written next references
+        // this milestone, so the topic file must exist on disk before it — any
+        // deriveDb between here and write-topic-page must not find a missing
+        // milestone topic (and an aborted run never leaves an orphan reference).
+        // write-topic-page later overwrites this with the synthesized body.
+        await writePage(selectedTopicPage.filePath, fm, "");
       } else if (subtopic && selectedTopicPage) {
         // Organic growth: new subtopic inside an existing topic.
         if (!selectedTopicPage.fm.subtopics.includes(subtopic)) {
@@ -427,7 +655,7 @@ async function processPdf(
       if (!selectedTopicPage) {
         throw new Error(`internal: topic page for "${milestone}" not found after classification`);
       }
-      return selectedTopicPage;
+      return { topicPage: selectedTopicPage, milestone, subtopic };
     },
     { ...paperCtx, slug }
   );
@@ -451,7 +679,7 @@ async function processPdf(
 
   const paperFm: PaperFrontmatter = {
     slug,
-    title: analysis.title,
+    title: phaseA.title,
     authors: analysis.authors ?? [],
     venue: analysis.venue ?? "",
     publishedAt: analysis.publishedAt ?? "",
@@ -469,7 +697,7 @@ async function processPdf(
   };
 
   const paperBody = renderPaperBody({
-    essence: analysis.essence,
+    essence: phaseA.essence,
     contributions: analysis.contributions ?? [],
     novelInsight: analysis.novelInsight,
     limitations: analysis.limitations ?? "",
@@ -493,19 +721,26 @@ async function processPdf(
   // (cites[] is empty until then).
 
   // --- LLM 3: topic synthesis -------------------------------------------------
+  // Incremental compounding: the NEW paper plus the newest 11 of its milestone
+  // (insertion order ≈ chronological) — the topic page evolves by incorporating
+  // new work, not by re-summarizing the oldest sources. The existing body is
+  // passed to the prompt, so earlier insights are retained, not restated.
   const existingSources = db.papers.filter((p) => p.milestone === milestone);
   const sourcesForSynthesis = [
-    ...existingSources.slice(0, 12).map((p) => ({
-      slug: p.slug,
-      title: p.title,
-      essence: p.essence,
-      contributions: [] as string[],
-      publishedAt: p.publishedAt,
-    })),
+    ...existingSources
+      .slice(-11)
+      .reverse()
+      .map((p) => ({
+        slug: p.slug,
+        title: p.title,
+        essence: p.essence,
+        contributions: [] as string[],
+        publishedAt: p.publishedAt,
+      })),
     {
       slug,
-      title: analysis.title,
-      essence: analysis.essence,
+      title: phaseA.title,
+      essence: phaseA.essence,
       contributions: analysis.contributions ?? [],
       publishedAt: analysis.publishedAt ?? "",
     },
@@ -524,33 +759,42 @@ async function processPdf(
         subtopics: topicPage.fm.subtopics,
         language: LANGUAGE,
       });
-      return llmJson<TopicSynthesis>({ provider, model, ...synthesisPrompt });
+      return llmJson<TopicSynthesis>({ provider, model, ...synthesisPrompt, maxTokens: SYNTH_MAX_TOKENS });
     },
     { ...paperCtx, slug }
   );
 
-  topicPage.fm.definition = truncate(synthesis.definition, 400);
-  const topicBody = renderTopicBody({
-    fm: topicPage.fm,
-    definitionProse: synthesis.definition,
-    keyProperties: synthesis.keyProperties ?? [],
-    sources: [
-      ...existingSources.map((p) => ({
-        slug: p.slug,
-        title: p.title,
-        venue: p.venue,
-        publishedAt: p.publishedAt,
-        subtopic: p.subtopic,
-      })),
-      { slug, title: analysis.title, venue: analysis.venue ?? "", publishedAt: analysis.publishedAt ?? "", subtopic },
-    ],
-    chronologicalEvolution: synthesis.chronologicalEvolution ?? null,
-    subtopicNotes: synthesis.subtopicNotes ?? {},
-  });
+  // Topic write re-reads the FRESH topic page + source list: the body reflects
+  // every paper of the milestone compiled so far (the synthesis prose is
+  // additive — last write wins, but no paper is ever lost from the cluster).
   await runCompileStep(
     "write-topic-page",
     "Write topic wiki page",
-    () => writePage(topicPage.filePath, topicPage.fm, topicBody),
+    async () => {
+      const fresh = await deriveDb();
+      const freshTopicPages = await readTopicPages();
+      const currentTopic = freshTopicPages.find((t) => t.fm.slug === topicPage.fm.slug) ?? topicPage;
+      currentTopic.fm.definition = truncate(synthesis.definition, 400);
+      const freshSources = fresh.papers.filter((p) => p.milestone === currentTopic.fm.slug && p.slug !== slug);
+      const topicBody = renderTopicBody({
+        fm: currentTopic.fm,
+        definitionProse: synthesis.definition,
+        keyProperties: synthesis.keyProperties ?? [],
+        sources: [
+          ...freshSources.map((p) => ({
+            slug: p.slug,
+            title: p.title,
+            venue: p.venue,
+            publishedAt: p.publishedAt,
+            subtopic: p.subtopic,
+          })),
+          { slug, title: phaseA.title, venue: analysis.venue ?? "", publishedAt: analysis.publishedAt ?? "", subtopic },
+        ],
+        chronologicalEvolution: synthesis.chronologicalEvolution ?? null,
+        subtopicNotes: synthesis.subtopicNotes ?? {},
+      });
+      await writePage(currentTopic.filePath, currentTopic.fm, topicBody);
+    },
     { ...paperCtx, slug }
   );
 
@@ -562,7 +806,6 @@ async function processPdf(
       const targetPath = path.join(PAPERS_COMPILED, `${slug}.pdf`);
       await fs.rename(pdfPath, targetPath);
       await assertRemovedFromInbox(basename);
-
     },
     { ...paperCtx, slug }
   );
@@ -574,14 +817,14 @@ async function processPdf(
     { ...paperCtx, slug }
   );
 
-  // --- Index, log, derived db (per-paper atomic) --------------------------------
+  // --- Index, log, derived db -------------------------------------------------
   const freshDb = await runCompileStep(
     "rebuild-derived-files",
     "Rebuild index, log, and database",
     async () => {
       const nextDb = await deriveDb();
       await regenIndex(nextDb, LANGUAGE);
-      await appendLog("ingest", analysis.title, [
+      await appendLog("ingest", phaseA.title, [
         `slug: ${slug}`,
         `topic: ${milestone}${subtopic ? ` / ${subtopic}` : ""} (${classification.action})`,
         `references: ${rawReferences.length} extracted (relations finalized at end of run)`,
@@ -609,7 +852,12 @@ async function processPdf(
 // Consolidation checks (Confirm-tier -> proposals queue, never auto-applied)
 // ---------------------------------------------------------------------------
 
-async function consolidationChecks(db: WikiDb): Promise<number> {
+async function consolidationChecks(
+  db: WikiDb,
+  provider: LLMProviderDef,
+  model: string,
+  newTopicSlugs: string[]
+): Promise<number> {
   const existing = await readProposals();
   const hasPending = (type: string, topic: string, subtopic: string | null) =>
     existing.some(
@@ -667,6 +915,51 @@ async function consolidationChecks(db: WikiDb): Promise<number> {
     }
   }
 
+  // Merge candidates: only when this run created a topic. One LLM pass over
+  // the whole tree (slug+name+definition) surfaces near-duplicates as
+  // Confirm-tier proposals — never auto-applied (P5). A failure here must not
+  // abort the compile, so it is caught and logged.
+  if (newTopicSlugs.length > 0 && db.topics.length >= 2) {
+    try {
+      const newSet = new Set(newTopicSlugs);
+      const prompt = topicMergePrompt({
+        topics: db.topics.map((t) => ({
+          slug: t.slug,
+          name: t.name,
+          definition: t.definition,
+          parentSlug: t.parentSlug,
+        })),
+      });
+      const raw = await llmJson<{ mergeCandidates?: TopicMergePair[] }>({
+        provider,
+        model,
+        ...prompt,
+        maxTokens: 2048,
+        temperature: 0,
+      });
+      for (const pair of raw.mergeCandidates ?? []) {
+        const a = db.topics.find((t) => t.slug === pair.slugA);
+        const b = db.topics.find((t) => t.slug === pair.slugB);
+        if (!a || !b || a.slug === b.slug) continue;
+        if (a.parentSlug === b.slug || b.parentSlug === a.slug) continue;
+        if (a.children.includes(b.slug) || b.children.includes(a.slug)) continue;
+        if (a.subtopics.includes(b.slug) || b.subtopics.includes(a.slug)) continue;
+        if (!newSet.has(a.slug) && !newSet.has(b.slug)) continue;
+        const [slugA, slugB] = [a.slug, b.slug].sort();
+        if (hasPending("merge-topic", slugA, slugB)) continue;
+        await appendProposal({
+          type: "merge-topic",
+          topic: slugA,
+          subtopic: slugB,
+          reason: `${pair.reason} (new topic involved: ${newTopicSlugs.join(", ")})`,
+        });
+        added += 1;
+      }
+    } catch (err) {
+      console.warn(`  ! merge-topic check skipped: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   return added;
 }
 
@@ -711,8 +1004,13 @@ async function main(): Promise<void> {
 
     const compiled: DbPaper[] = [];
     const skipped: string[] = [];
-    for (let i = 0; i < inbox.length; i++) {
-      const pdfPath = inbox[i];
+    const topicsBefore = new Set((await deriveDb()).topics.map((t) => t.slug));
+
+    // Sequential, fail-hard, incremental: each paper compiles against the FULL
+    // state left by the previous one, so the knowledge base grows one paper at
+    // a time. The first failure aborts the run; processed papers persist and
+    // the rest stay in the inbox for the next run.
+    for (const [i, pdfPath] of inbox.entries()) {
       const basename = path.basename(pdfPath);
       try {
         const result = await processPdf(pdfPath, provider, model, i, inbox.length);
@@ -869,7 +1167,8 @@ async function main(): Promise<void> {
       "Check topic consolidation proposals",
       async () => {
         const finalDb = await deriveDb();
-        const count = await consolidationChecks(finalDb);
+        const newTopicSlugs = finalDb.topics.filter((t) => !topicsBefore.has(t.slug)).map((t) => t.slug);
+        const count = await consolidationChecks(finalDb, provider, model, newTopicSlugs);
         if (count > 0) {
           const freshDb = await deriveDb();
           await writeDbAtomic(freshDb);

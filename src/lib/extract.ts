@@ -11,13 +11,16 @@ const pdfjs = require("pdfjs-dist/legacy/build/pdf.js");
 export interface ExtractedPaper {
   numPages: number;
   metaTitle: string | null;
-  /** Capped text: first HEAD_PAGES + last TAIL_PAGES, joined, truncated to MAX_CHARS. */
+  /** Full extracted text: every page joined, truncated head-first only at FULL_MAX_CHARS. */
   text: string;
 }
 
-const HEAD_PAGES = 12;
-const TAIL_PAGES = 4;
-const MAX_CHARS = 60_000;
+/**
+ * Upper bound on extracted text (~250k tokens at ~4 chars/token). Covers
+ * 200+ page papers with wide headroom under a 1M-token model context window;
+ * truncation is head-first with an explicit marker (never a silent amputation).
+ */
+export const FULL_MAX_CHARS = 1_000_000;
 
 export async function extractPdf(filePath: string): Promise<ExtractedPaper> {
   const buf = await fs.readFile(filePath);
@@ -44,11 +47,8 @@ export async function extractPdf(filePath: string): Promise<ExtractedPaper> {
       /* metadata is best-effort */
     }
 
-    const all = Array.from({ length: numPages }, (_, i) => i + 1);
-    const wanted = [...new Set([...all.slice(0, HEAD_PAGES), ...all.slice(-TAIL_PAGES)])];
-
     const chunks: string[] = [];
-    for (const pageNum of wanted) {
+    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
       const page = await doc.getPage(pageNum);
       const content = await page.getTextContent();
       const text = content.items.map((item: { str: string }) => item.str).join(" ");
@@ -56,8 +56,8 @@ export async function extractPdf(filePath: string): Promise<ExtractedPaper> {
     }
 
     let text = chunks.join("\n\n");
-    if (text.length > MAX_CHARS) {
-      text = text.slice(0, MAX_CHARS) + "\n[...truncated]";
+    if (text.length > FULL_MAX_CHARS) {
+      text = text.slice(0, FULL_MAX_CHARS) + "\n[...truncated]";
     }
     return { numPages, metaTitle, text };
   } finally {

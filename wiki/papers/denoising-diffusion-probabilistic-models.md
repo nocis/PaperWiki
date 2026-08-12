@@ -5,16 +5,18 @@ authors:
   - Jonathan Ho
   - Ajay Jain
   - Pieter Abbeel
-venue: 34th Conference on Neural Information Processing Systems (NeurIPS 2020)
+venue: >-
+  34th Conference on Neural Information Processing Systems (NeurIPS 2020),
+  Vancouver, Canada
 publishedAt: 2020-12
 tags:
   - year/2020-12
   - >-
-    venue/34th-Conference-on-Neural-Information-Processing-Systems-(NeurIPS-2020)
+    venue/34th-Conference-on-Neural-Information-Processing-Systems-(NeurIPS-2020),-Vancouver,-Canada
 milestone: diffusion-probabilistic-models
 subtopic: null
 numPages: 25
-addedAt: '2026-08-04'
+addedAt: '2026-08-13'
 rawPath: papers/compiled/denoising-diffusion-probabilistic-models.pdf
 pdfUrl: /pdfs/denoising-diffusion-probabilistic-models.pdf
 figures:
@@ -39,25 +41,23 @@ relations:
   - relation: builds-on
     slug: deep-unsupervised-learning-using-nonequilibrium-thermodynamics
     note: >-
-      Extends Sohl-Dickstein et al.'s diffusion probabilistic models from toy
-      examples to high-quality image synthesis, introducing the
-      epsilon-prediction parameterization and simplified objective that make
+      Introduces epsilon-prediction parameterization and simplified variational
+      objective, enabling high-quality image synthesis.
   - relation: impacts
     slug: denoising-diffusion-implicit-models
     note: >-
-      Provides the foundational diffusion framework that DDIM later accelerates
-      by introducing implicit sampling, inheriting the noise schedule and
-      training objective.
+      Directly influences DDIM, which builds on this framework to achieve
+      deterministic and faster sampling.
 ---
 ## Essence
-Introduces denoising diffusion probabilistic models (DDPMs), showing that a parameterized Markov chain trained with variational inference can reverse a fixed Gaussian diffusion process to generate high-quality images. A novel epsilon-prediction parameterization connects diffusion models to denoising score matching and annealed Langevin dynamics, yielding a simplified weighted training objective. Achieves state-of-the-art FID 3.17 on CIFAR10 and introduces progressive lossy compression interpretation generalizing autoregressive decoding.
+The paper presents high-quality image synthesis using diffusion probabilistic models, a class of latent variable models inspired by nonequilibrium thermodynamics. The method trains a Markov chain reverse process using a weighted variational bound, establishing a connection to denoising score matching with Langevin dynamics, and achieves state-of-the-art FID of 3.17 on CIFAR10 and sample quality similar to ProgressiveGAN on LSUN. The models also enable progressive lossy decompression, interpreted as a generalization of autoregressive decoding.
 
 ## Contributions
-- First demonstration that diffusion probabilistic models can synthesize high-quality images, reaching FID 3.17 and IS 9.46 on unconditional CIFAR10, surpassing most published GAN results.
-- Derives an epsilon-prediction reparameterization of the reverse process that is equivalent to denoising score matching over multiple noise levels and to annealed Langevin dynamics during sampling.
-- Proposes a simplified, unweighted mean-squared-error training objective (L_simple) that improves sample quality over the full variational bound, and shows fixed variances outperform learned diagonal variances.
-- Interprets the variational bound as a progressive lossy compression scheme, showing diffusion models allocate most bits to imperceptible details and act as excellent lossy compressors.
-- Establishes a connection between Gaussian diffusion and autoregressive decoding with a generalized bit ordering that cannot be expressed by reordering data coordinates.
+- Reparameterizes the reverse process to predict noise rather than the posterior mean, yielding a direct connection between diffusion models and denoising score matching with Langevin dynamics.
+- Introduces a simplified, unweighted variational objective that improves sample quality and stabilizes training relative to the full variational bound.
+- Demonstrates the first high-quality image synthesis with diffusion models, achieving state-of-the-art FID of 3.17 on unconditional CIFAR10 and sample quality comparable to ProgressiveGAN on LSUN 256x256.
+- Shows that diffusion decoding naturally induces progressive lossy compression, interpreted as a generalization of autoregressive decoding over a flexible bit ordering.
+- Provides ablations showing that fixed reverse-process variances outperform learned diagonal variances and that the epsilon-prediction parameterization is critical for the simplified objective.
 
 ## Figures
 ![Figure 1](/figures/denoising-diffusion-probabilistic-models/figure_1.png)
@@ -75,17 +75,17 @@ Introduces denoising diffusion probabilistic models (DDPMs), showing that a para
 ![Page 1](/figures/denoising-diffusion-probabilistic-models/page_1.png)
 
 ## Critical Analysis
-**Novel Insight**: *prior:* Diffusion probabilistic models were known since Sohl-Dickstein et al. (2015) but had no demonstrated ability to generate high-quality samples; score matching and variational Markov-chain training were seen as distinct approaches, and training used learned variances and the true variational bound. / *update:* Predicting the noise epsilon with a simplified unweighted MSE objective, rather than the posterior mean with a full variational bound, makes diffusion models match GAN sample quality; this objective is equivalent to denoising score matching and to variational training of a Langevin-like sampler, unifying both lines.
+**Novel Insight**: *prior:* Diffusion probabilistic models were regarded as a restricted latent-variable formulation with no demonstrated ability to synthesize high-quality samples, and their relationship to score matching was not exploited. / *update:* Reparameterizing the reverse process to predict noise and simplifying the variational bound makes diffusion training equivalent to weighted denoising score matching, turning the same Markov chain framework into a high-fidelity generator that rivals GANs.
 
-**Fundamental Limitations**: Log-likelihoods are not competitive with likelihood-based models (e.g., sparse transformers); sampling requires T=1000 sequential network evaluations, making it slow; learned variance parameterization was unstable; most bits in lossless coding describe imperceptible details, making the model better as a lossy compressor than a likelihood model.
+**Fundamental Limitations**: Negative log-likelihoods are not competitive with autoregressive models, and sampling requires 1000 sequential network evaluations. Learning diagonal reverse-process variances is unstable. The progressive lossy compression scheme depends on minimal random coding, which is impractical for high-dimensional data. The method is demonstrated primarily on image datasets and has high computational cost.
 
-**Research Frontier**: Making diffusion models fast to sample (fewer steps, distillation, or non-Markovian processes), closing the likelihood gap with autoregressive/flow models, extending beyond images (audio, video, 3D), integrating diffusion components into larger generative systems, and theoretically characterizing the generalized bit ordering and progressive-compression view.
+**Research Frontier**: Open directions include improving likelihood bounds, reducing sampling cost, exploring more powerful decoders, extending diffusion models to other data modalities, and developing practical compression algorithms. The established link to energy-based models and generalized autoregressive orderings suggests further architectural and training innovations.
 
 ## Relations
-Building directly on Sohl-Dickstein et al.'s nonequilibrium thermodynamics framework, this paper transforms diffusion models from a theoretical construction to a practical, state-of-the-art generative model. It also formalizes a bridge to Song & Ermon's denoising score matching and annealed Langevin dynamics, and it reinterprets the variational bound as progressive lossy compression, generalizing autoregressive decoding. This work supersedes the earlier perception of diffusion models as impractical and underpins later works such as DDIM.
+This paper takes the diffusion probabilistic model introduced by Sohl-Dickstein et al. and, by reparameterizing the reverse process to predict noise and simplifying the weighted variational bound, turns it from a theoretically elegant but practically weak generator into a state-of-the-art image synthesis model. It also draws on denoising score matching and annealed Langevin dynamics, showing that the diffusion training objective is equivalent to a weighted form of score matching. The result supersedes the earlier assessment that diffusion models could not produce competitive samples, and it directly inspired later acceleration methods such as DDIM.
 
-- **builds-on** [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]] — Extends Sohl-Dickstein et al.'s diffusion probabilistic models from toy examples to high-quality image synthesis, introducing the epsilon-prediction parameterization and simplified objective that make
-- **impacts** [[denoising-diffusion-implicit-models]] — Provides the foundational diffusion framework that DDIM later accelerates by introducing implicit sampling, inheriting the noise schedule and training objective.
+- **builds-on** [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]] — Introduces epsilon-prediction parameterization and simplified variational objective, enabling high-quality image synthesis.
+- **impacts** [[denoising-diffusion-implicit-models]] — Directly influences DDIM, which builds on this framework to achieve deterministic and faster sampling.
 ## Citations
 _1 of 72 citations linked to compiled papers._
 
@@ -118,7 +118,7 @@ _1 of 72 citations linked to compiled papers._
 27. Tero Karras, Timo Aila, Samuli Laine, and Jaakko Lehtinen. Progressive growing of GANs for improved quality, stability, and variation. In International Conference on Learning Representations, 2018.
 28. Tero Karras, Samuli Laine, and Timo Aila. A style-based generator architecture for generative adversarial networks. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, pages 4401–4410, 2019.
 29. Tero Karras, Miika Aittala, Janne Hellsten, Samuli Laine, Jaakko Lehtinen, and Timo Aila. Training generative adversarial networks with limited data. arXiv preprint arXiv:2006.06676v1, 2020.
-30. Tero Karras, Samuli Laine, Miika Aittala, Janne Hellsten, Jaakko Lehtinen, and Timo Aila. Analyzing and improving the image quality of StyleGAN. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 8110–8119, 2020.
+30. Tero Karras, Samuli Laine, Miika Aittala, Janne Hellsten, Samuli Laine, Jaakko Lehtinen, and Timo Aila. Analyzing and improving the image quality of StyleGAN. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition, pages 8110–8119, 2020.
 31. Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. In International Conference on Learning Representations, 2015.
 32. Diederik P Kingma and Prafulla Dhariwal. Glow: Generative flow with invertible 1x1 convolutions. In Advances in Neural Information Processing Systems, pages 10215–10224, 2018.
 33. Diederik P Kingma and Max Welling. Auto-encoding variational Bayes. arXiv preprint arXiv:1312.6114, 2013.

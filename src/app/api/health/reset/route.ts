@@ -47,15 +47,30 @@ async function isAnyRunActive(): Promise<boolean> {
   );
 }
 
-/** Move a PDF into papers/new/ without overwriting an existing file. */
-async function moveToInbox(filePath: string, moved: string[], skipped: string[]): Promise<void> {
-  const target = path.join(PAPERS_NEW, path.basename(filePath));
-  try {
-    await fs.access(target);
-    skipped.push(path.basename(filePath));
-  } catch {
-    await fs.rename(filePath, target);
-    moved.push(path.basename(filePath));
+/** First free name in papers/new/ for a basename: name.pdf, name-2.pdf, ... */
+async function freeInboxTarget(basename: string): Promise<string> {
+  let target = path.join(PAPERS_NEW, basename);
+  let n = 2;
+  while (await fs.access(target).then(() => true).catch(() => false)) {
+    target = path.join(PAPERS_NEW, `${basename.replace(/\.pdf$/i, "")}-${n}.pdf`);
+    n += 1;
+  }
+  return target;
+}
+
+/**
+ * Move a PDF into papers/new/. On a name collision the file is renamed
+ * (name-2.pdf, name-3.pdf, ...) — never skipped and never overwritten, so a
+ * PDF can never be left behind in a directory that is about to be deleted.
+ */
+async function moveToInbox(filePath: string, moved: string[], renamed: string[]): Promise<void> {
+  const basename = path.basename(filePath);
+  const target = await freeInboxTarget(basename);
+  await fs.rename(filePath, target);
+  if (path.basename(target) === basename) {
+    moved.push(basename);
+  } else {
+    renamed.push(`${basename} -> ${path.basename(target)}`);
   }
 }
 
@@ -94,18 +109,34 @@ export async function POST(request: NextRequest) {
   }
 
   const moved: string[] = [];
-  const skipped: string[] = [];
+  const renamed: string[] = [];
   const removedDirs: string[] = [];
   const removedFiles: string[] = [];
 
-  // 1. Sources back to the inbox (never deleted).
+  // 1. Sources back to the inbox (never deleted). Collisions in papers/new/
+  //    are resolved by renaming, so every PDF leaves its source directory.
   await fs.mkdir(PAPERS_NEW, { recursive: true });
   for (const filePath of await listPdfFiles(PAPERS_COMPILED)) {
-    await moveToInbox(filePath, moved, skipped);
+    await moveToInbox(filePath, moved, renamed);
   }
   for (const filePath of await listPdfFiles(PAPERS_DUPLICATES)) {
-    await moveToInbox(filePath, moved, skipped);
+    await moveToInbox(filePath, moved, renamed);
   }
+
+  // 1b. Safety guard: papers/compiled/ is about to be deleted — nothing may
+  // remain in it. Any leftover PDF aborts the reset loudly (HTTP 500, explicit
+  // list) and leaves every generated artifact intact for a retry. Never delete
+  // a directory that still holds PDFs.
+  const leftovers = await listPdfFiles(PAPERS_COMPILED);
+  if (leftovers.length > 0) {
+    return bad(
+      `reset aborted: ${leftovers.length} compiled PDF(s) could not be moved back to papers/new/ and were NOT deleted — resolve the conflict and retry: ${leftovers
+        .map((p) => path.basename(p))
+        .join(", ")}`,
+      500
+    );
+  }
+  const leftoverDuplicates = await listPdfFiles(PAPERS_DUPLICATES);
 
   // 2. Derived artifacts.
   for (const dir of [PAPERS_COMPILED, WIKI_PAPERS_DIR, WIKI_TOPICS_DIR, WIKI_CONCEPTS_DIR]) {
@@ -159,7 +190,9 @@ export async function POST(request: NextRequest) {
   }
 
   await appendWikiJournal("reset", "State reset to zero", [
-    `compiled papers moved to papers/new/: ${moved.length > 0 ? moved.join(", ") : "(none)"}`,
+    `compiled papers moved to papers/new/: ${moved.length > 0 ? moved.join(", ") : "(none)"}${
+      renamed.length > 0 ? `; renamed on collision: ${renamed.join(", ")}` : ""
+    }`,
     `favorite articles kept: ${keptFavorites.length > 0 ? keptFavorites.join(", ") : "(none)"}`,
     `kept: wiki/SCHEMA.md, wiki/journal/, knowledge/pieces/, comments/`,
   ]);
@@ -167,7 +200,8 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     ok: true,
     movedToInbox: moved,
-    skippedInPlace: skipped,
+    renamed,
+    leftoverDuplicates: leftoverDuplicates.map((p) => path.basename(p)),
     removedDirs,
     removedFiles,
   });

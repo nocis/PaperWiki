@@ -15,8 +15,8 @@ import * as path from "path";
 
 const LOG_DIR = path.join(process.cwd(), ".log");
 
-export type RunStatus = "idle" | "running" | "completed" | "failed";
-export type EventStatus = "started" | "completed" | "failed" | "skipped";
+export type RunStatus = "idle" | "running" | "completed" | "failed" | "cancelled";
+export type EventStatus = "started" | "completed" | "failed" | "skipped" | "cancelled";
 export type RunSource = "cli" | "ui";
 
 export interface ProgressEvent {
@@ -84,6 +84,16 @@ export function createProgress(config: ProgressConfig) {
   const statusPath = path.join(LOG_DIR, `${config.name}-status.json`);
   let currentRunId: string | undefined;
 
+  // Serialize status-file read-modify-write operations. Concurrent callers
+  // (parallel compile papers, end-of-run passes) share ONE status file — a
+  // promise chain ensures events and totals are never lost to interleaving.
+  let lockChain: Promise<void> = Promise.resolve();
+  function withLock<T>(work: () => Promise<T>): Promise<T> {
+    const result = lockChain.then(work);
+    lockChain = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
   function newSnapshot(input: {
     runId: string;
     source: RunSource;
@@ -147,7 +157,7 @@ export function createProgress(config: ProgressConfig) {
     return `${config.name}-${Date.now()}-${randomUUID().slice(0, 8)}`;
   }
 
-  async function start(input: {
+  async function startRaw(input: {
     runId?: string;
     source: RunSource;
     provider?: string;
@@ -164,7 +174,7 @@ export function createProgress(config: ProgressConfig) {
       scope: input.scope,
     });
     await writeSnapshotAtomic(snapshot);
-    await record({
+    await recordRaw({
       runId,
       step: "run-started",
       label: "Run started",
@@ -179,7 +189,7 @@ export function createProgress(config: ProgressConfig) {
     currentRunId = runId;
   }
 
-  async function record(input: EventInput): Promise<void> {
+  async function recordRaw(input: EventInput): Promise<void> {
     const runId = input.runId ?? currentRunId;
     if (!runId) return;
 
@@ -215,7 +225,21 @@ export function createProgress(config: ProgressConfig) {
     await writeSnapshotAtomic(snapshot);
   }
 
-  async function update(patch: {
+  function start(input: {
+    runId?: string;
+    source: RunSource;
+    provider?: string;
+    model?: string;
+    scope?: string;
+  }): Promise<string> {
+    return withLock(() => startRaw(input));
+  }
+
+  function record(input: EventInput): Promise<void> {
+    return withLock(() => recordRaw(input));
+  }
+
+  async function updateRaw(patch: {
     totals?: Partial<Record<string, number>>;
     provider?: string;
     model?: string;
@@ -230,6 +254,15 @@ export function createProgress(config: ProgressConfig) {
     if (patch.outputTail !== undefined) snapshot.outputTail = patch.outputTail;
     snapshot.updatedAt = new Date().toISOString();
     await writeSnapshotAtomic(snapshot);
+  }
+
+  function update(patch: {
+    totals?: Partial<Record<string, number>>;
+    provider?: string;
+    model?: string;
+    outputTail?: string;
+  }): Promise<void> {
+    return withLock(() => updateRaw(patch));
   }
 
   async function runStep<T>(
@@ -271,13 +304,13 @@ export function createProgress(config: ProgressConfig) {
     }
   }
 
-  async function finish(
+  async function finishRaw(
     status: Exclude<RunStatus, "idle" | "running">,
     message: string,
     outputTail?: string
   ): Promise<void> {
     if (!currentRunId) return;
-    await record({
+    await recordRaw({
       step: status === "completed" ? "run-completed" : "run-failed",
       label: status === "completed" ? "Run completed" : "Run failed",
       status: status === "completed" ? "completed" : "failed",
@@ -298,22 +331,33 @@ export function createProgress(config: ProgressConfig) {
     await writeSnapshotAtomic(snapshot);
   }
 
+  function finish(
+    status: Exclude<RunStatus, "idle" | "running">,
+    message: string,
+    outputTail?: string
+  ): Promise<void> {
+    return withLock(() => finishRaw(status, message, outputTail));
+  }
+
   /** Terminal fallback used by the API parent process if the child exits early. */
-  async function markProcessFinished(input: {
+  async function markProcessFinishedRaw(input: {
     runId: string;
     ok: boolean;
     message: string;
     outputTail?: string;
+    /** Override the terminal status — e.g. a user-initiated cancel. */
+    status?: "failed" | "cancelled";
   }): Promise<void> {
     const snapshot = await readStatus();
     if (!snapshot || snapshot.runId !== input.runId) return;
 
     if (snapshot.status === "running") {
-      await record({
+      const cancelled = input.status === "cancelled";
+      await recordRaw({
         runId: input.runId,
-        step: input.ok ? "process-completed" : "process-failed",
-        label: input.ok ? "Process completed" : "Process failed",
-        status: input.ok ? "completed" : "failed",
+        step: cancelled ? "process-cancelled" : input.ok ? "process-completed" : "process-failed",
+        label: cancelled ? "Process cancelled" : input.ok ? "Process completed" : "Process failed",
+        status: cancelled ? "cancelled" : input.ok ? "completed" : "failed",
         message: input.message,
       });
     }
@@ -321,17 +365,27 @@ export function createProgress(config: ProgressConfig) {
     const latest = await readStatus();
     if (!latest || latest.runId !== input.runId) return;
     if (latest.status === "running") {
-      latest.status = input.ok ? "completed" : "failed";
+      latest.status = input.status ?? (input.ok ? "completed" : "failed");
       latest.finishedAt = new Date().toISOString();
       latest.updatedAt = latest.finishedAt;
       latest.currentStep = undefined;
       latest.currentLabel = undefined;
       latest.currentFile = undefined;
       latest.currentSlug = undefined;
-      if (!input.ok) latest.error = input.message;
+      if (input.status === "cancelled" || !input.ok) latest.error = input.message;
     }
     if (input.outputTail !== undefined) latest.outputTail = input.outputTail;
     await writeSnapshotAtomic(latest);
+  }
+
+  function markProcessFinished(input: {
+    runId: string;
+    ok: boolean;
+    message: string;
+    outputTail?: string;
+    status?: "failed" | "cancelled";
+  }): Promise<void> {
+    return withLock(() => markProcessFinishedRaw(input));
   }
 
   return {

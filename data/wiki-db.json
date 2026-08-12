@@ -1,21 +1,21 @@
 {
   "version": 1,
-  "updatedAt": "2026-08-04T20:40:45.762Z",
+  "updatedAt": "2026-08-13T06:11:22.268Z",
   "topics": [
     {
       "slug": "diffusion-probabilistic-models",
       "name": "Diffusion Probabilistic Models",
-      "definition": "Generative models that define a data distribution as the endpoint of a Markov chain which gradually destroys structure through forward diffusion, and learn a reverse diffusion process to restore it; DDPMs make this practical with a variational-trained reparameterized reverse chain for high-quality synthesis, and later generalizations replace the Markovian forward process with non-Markovian proces…",
+      "definition": "Generative models that learn to reverse a forward process which gradually adds noise to data, encompassing the original Markov chain formulation (diffusion probabilistic models), the high-quality DDPM variant trained with a simplified noise-prediction objective, and non-Markovian implicit generalizations (denoising diffusion implicit models), enabling tractable or accelerated sampling, likelihood…",
       "mode": "standalone",
       "parentSlug": null,
       "children": [],
       "subtopics": [],
       "tags": [
-        "deep generative models",
-        "diffusion probabilistic models",
-        "unsupervised learning",
-        "nonequilibrium thermodynamics",
-        "density estimation"
+        "generative-modeling",
+        "deep-unsupervised-learning",
+        "markov-chains",
+        "nonequilibrium-thermodynamics",
+        "likelihood-based"
       ],
       "sources": [
         "deep-unsupervised-learning-using-nonequilibrium-thermodynamics",
@@ -35,18 +35,18 @@
         "Niru Maheswaranathan",
         "Surya Ganguli"
       ],
-      "venue": "ICML 2015 (JMLR W&CP volume 37)",
+      "venue": "Proceedings of the 32nd International Conference on Machine Learning (ICML 2015), JMLR W&CP volume 37, Lille, France",
       "publishedAt": "2015-07",
       "tags": [
         "year/2015-07",
-        "venue/ICML-2015-(JMLR-W&CP-volume-37)"
+        "venue/Proceedings-of-the-32nd-International-Conference-on-Machine-Learning-(ICML-2015),-JMLR-W&CP-volume-37,-Lille,-France"
       ],
       "milestone": "diffusion-probabilistic-models",
       "subtopic": null,
       "numPages": 18,
-      "addedAt": "2026-08-04",
+      "addedAt": "2026-08-13",
       "url": "/pdfs/deep-unsupervised-learning-using-nonequilibrium-thermodynamics.pdf",
-      "essence": "Introduces diffusion probabilistic models: a generative model is defined as the endpoint of a Markov chain that gradually destroys structure in a data distribution through forward diffusion, while a learned reverse diffusion restores it. Training maximizes a tractable lower bound on log likelihood by estimating small per-step perturbations, enabling exact sampling and cheap likelihood evaluation. The framework scales to thousands of layers and supports posterior computations such as denoising and inpainting.",
+      "essence": "The paper introduces diffusion probabilistic models, which use a forward diffusion process to gradually destroy structure in a data distribution and a learned reverse diffusion process to restore it, yielding a highly flexible and tractable generative model. This approach enables exact sampling, efficient evaluation of probabilities, and easy computation of conditional and posterior distributions, demonstrated on datasets such as MNIST, CIFAR-10, and natural images.",
       "figures": [
         "figure_1.png",
         "figure_10.png",
@@ -83,9 +83,9 @@
       "milestone": "diffusion-probabilistic-models",
       "subtopic": null,
       "numPages": 22,
-      "addedAt": "2026-08-04",
+      "addedAt": "2026-08-13",
       "url": "/pdfs/denoising-diffusion-implicit-models.pdf",
-      "essence": "DDIMs generalize denoising diffusion probabilistic models to a family of non-Markovian forward processes whose marginals match DDPM's, reusing the same training objective and pretrained networks. By choosing a deterministic generative process (implicit model), they turn sampling into ODE-like integration, yielding 10x-50x faster generation, latent-space consistency, meaningful interpolation, and low-error reconstruction.",
+      "essence": "The paper introduces denoising diffusion implicit models (DDIMs), a class of iterative implicit probabilistic models that share the training objective of DDPMs but use non-Markovian diffusion processes to enable deterministic, accelerated sampling. DDIMs produce high-quality images 10 to 50 times faster than DDPMs, allow trade-offs between computation and sample quality, support semantically meaningful latent-space interpolation, and can reconstruct observations with low error.",
       "figures": [
         "figure_1.png",
         "figure_10.png",
@@ -107,12 +107,7 @@
         {
           "relation": "extends",
           "slug": "deep-unsupervised-learning-using-nonequilibrium-thermodynamics",
-          "note": "Generalizes the diffusion probabilistic framework to non-Markovian forward processes, enabling accelerated sampling while preserving the same marginals and training objective."
-        },
-        {
-          "relation": "contradicts",
-          "slug": "deep-unsupervised-learning-using-nonequilibrium-thermodynamics",
-          "note": "Shows that Markovianity of the forward diffusion is not necessary; non-Markovian processes with the same marginals yield faster samplers without retraining."
+          "note": "Introduces the diffusion probabilistic model framework that DDIM generalizes to non-Markovian forward processes while preserving the same variational objective."
         }
       ]
     },
@@ -124,18 +119,18 @@
         "Ajay Jain",
         "Pieter Abbeel"
       ],
-      "venue": "34th Conference on Neural Information Processing Systems (NeurIPS 2020)",
+      "venue": "34th Conference on Neural Information Processing Systems (NeurIPS 2020), Vancouver, Canada",
       "publishedAt": "2020-12",
       "tags": [
         "year/2020-12",
-        "venue/34th-Conference-on-Neural-Information-Processing-Systems-(NeurIPS-2020)"
+        "venue/34th-Conference-on-Neural-Information-Processing-Systems-(NeurIPS-2020),-Vancouver,-Canada"
       ],
       "milestone": "diffusion-probabilistic-models",
       "subtopic": null,
       "numPages": 25,
-      "addedAt": "2026-08-04",
+      "addedAt": "2026-08-13",
       "url": "/pdfs/denoising-diffusion-probabilistic-models.pdf",
-      "essence": "Introduces denoising diffusion probabilistic models (DDPMs), showing that a parameterized Markov chain trained with variational inference can reverse a fixed Gaussian diffusion process to generate high-quality images. A novel epsilon-prediction parameterization connects diffusion models to denoising score matching and annealed Langevin dynamics, yielding a simplified weighted training objective. Achieves state-of-the-art FID 3.17 on CIFAR10 and introduces progressive lossy compression interpretation generalizing autoregressive decoding.",
+      "essence": "The paper presents high-quality image synthesis using diffusion probabilistic models, a class of latent variable models inspired by nonequilibrium thermodynamics. The method trains a Markov chain reverse process using a weighted variational bound, establishing a connection to denoising score matching with Langevin dynamics, and achieves state-of-the-art FID of 3.17 on CIFAR10 and sample quality similar to ProgressiveGAN on LSUN. The models also enable progressive lossy decompression, interpreted as a generalization of autoregressive decoding.",
       "figures": [
         "figure_1.png",
         "figure_10.png",
@@ -157,7 +152,7 @@
         {
           "relation": "builds-on",
           "slug": "deep-unsupervised-learning-using-nonequilibrium-thermodynamics",
-          "note": "Extends Sohl-Dickstein et al.'s diffusion probabilistic models from toy examples to high-quality image synthesis, introducing the epsilon-prediction parameterization and simplified objective that make the framework practical."
+          "note": "Extends the original diffusion probabilistic model by adding an epsilon-prediction parameterization and a simplified variational objective that make it capable of high-quality image synthesis."
         }
       ]
     }

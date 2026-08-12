@@ -11,6 +11,7 @@
  *   WIKI_LLM_BASE_URL     (optional) — override the selected provider's base URL
  */
 import { getProvider, LLM_PROVIDERS, DEFAULT_PROVIDER_ID, type LLMProviderDef } from "./llm-providers";
+import { httpJsonRequest, type HttpJsonResult } from "./llm-http";
 export type { LLMProviderDef };
 
 export interface ChatMessage {
@@ -84,29 +85,48 @@ function baseUrl(provider: LLMProviderDef): string {
 }
 
 interface ChatCompletionResponse {
-  choices?: { message?: { content?: string } }[];
+  choices?: {
+    message?: { content?: string; reasoning_content?: string };
+    finish_reason?: string;
+  }[];
+  usage?: {
+    completion_tokens?: number;
+    completion_tokens_details?: { reasoning_tokens?: number };
+  };
 }
 
 /** Transport-level POST. Throws LlmError on HTTP/network errors. */
+const LLM_REQUEST_TIMEOUT_MS = 120_000;
+
 async function postChat(provider: LLMProviderDef, body: Record<string, unknown>): Promise<ChatCompletionResponse> {
-  let res: Response;
+  // Resolve the URL and key BEFORE the request: a missing key or a wrong
+  // WIKI_LLM_BASE_URL override must surface as itself, not as a transport error.
+  const url = `${baseUrl(provider)}/chat/completions`;
+  const key = apiKey(provider);
+  let res: HttpJsonResult;
   try {
-    res = await fetch(`${baseUrl(provider)}/chat/completions`, {
+    // Deliberately NOT global fetch — see src/lib/llm-http.ts (undici connect
+    // can hang with ETIMEDOUT on AAAA-hosts when the host lacks an IPv6 route).
+    res = await httpJsonRequest({
+      url,
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${apiKey(provider)}`,
+        authorization: `Bearer ${key}`,
       },
       body: JSON.stringify(body),
+      timeoutMs: LLM_REQUEST_TIMEOUT_MS,
     });
   } catch (err) {
-    throw new LlmError(
-      "unreachable",
-      `LLM gateway unreachable (provider ${provider.id}): ${err instanceof Error ? err.message : String(err)}`
-    );
+    const e = err as { message?: string; code?: string };
+    const timedOut = e.code === "ETIMEDOUT" || /timed out/i.test(e.message ?? "");
+    const detail = timedOut
+      ? `timed out after ${LLM_REQUEST_TIMEOUT_MS / 1000}s`
+      : `${e.message ?? String(err)}${e.code ? ` (${e.code})` : ""}`;
+    throw new LlmError("unreachable", `LLM gateway unreachable (provider ${provider.id}): ${detail} — POST ${url}`);
   }
-  if (!res.ok) {
-    const detail = (await res.text()).slice(0, 500);
+  if (res.status < 200 || res.status >= 300) {
+    const detail = res.text.slice(0, 500);
     const kind: LlmErrorKind =
       res.status === 401 || res.status === 403
         ? "auth"
@@ -117,15 +137,34 @@ async function postChat(provider: LLMProviderDef, body: Record<string, unknown>)
             : "other";
     throw new LlmError(kind, `LLM request failed (provider ${provider.id}): HTTP ${res.status} — ${detail}`);
   }
-  return (await res.json()) as ChatCompletionResponse;
+  try {
+    return JSON.parse(res.text) as ChatCompletionResponse;
+  } catch {
+    throw new LlmError("other", `LLM request failed (provider ${provider.id}): malformed JSON response`);
+  }
 }
 
 /** Chat completion with strict non-empty content validation (for real calls). */
 async function postChatCompletion(provider: LLMProviderDef, body: Record<string, unknown>): Promise<string> {
   const data = await postChat(provider, body);
-  const content = data.choices?.[0]?.message?.content;
+  const choice = data.choices?.[0];
+  const content = choice?.message?.content;
   if (typeof content !== "string" || content.length === 0) {
-    throw new Error("LLM returned an empty response");
+    // Self-diagnosing: an empty content with finish_reason "length" means the
+    // output budget was consumed (often by reasoning_content); other reasons
+    // mean the gateway returned a genuinely empty completion.
+    const usage = data.usage;
+    const details = [
+      choice?.finish_reason ? `finish_reason: ${choice.finish_reason}` : null,
+      usage?.completion_tokens !== undefined ? `completion_tokens: ${usage.completion_tokens}` : null,
+      usage?.completion_tokens_details?.reasoning_tokens !== undefined
+        ? `reasoning_tokens: ${usage.completion_tokens_details.reasoning_tokens}`
+        : null,
+      data.choices !== undefined ? `choices: ${data.choices.length}` : null,
+    ]
+      .filter((d): d is string => d !== null)
+      .join(", ");
+    throw new Error(`LLM returned an empty response${details ? ` (${details})` : ""}`);
   }
   return content;
 }

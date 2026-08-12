@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useLlmPrefs } from "@/components/LlmPrefsProvider";
 import { availabilityMessage } from "@/lib/llm-availability";
 
@@ -67,6 +68,7 @@ interface CitationsResponse {
 }
 
 export default function HealthDashboard() {
+  const router = useRouter();
   const [view, setView] = useState<View>("running");
   const [report, setReport] = useState<HealthReport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -153,17 +155,29 @@ export default function HealthDashboard() {
       const data = (await res.json()) as {
         error?: string;
         movedToInbox?: string[];
-        skippedInPlace?: string[];
+        renamed?: string[];
+        leftoverDuplicates?: string[];
         removedDirs?: string[];
         removedFiles?: string[];
       };
       if (!res.ok) throw new Error(data.error ?? `reset failed with HTTP ${res.status}`);
       setResetResult(
-        `${data.movedToInbox?.length ?? 0} paper(s) moved back to papers/new/; ${
+        `${data.movedToInbox?.length ?? 0} paper(s) moved back to papers/new/${
+          data.renamed && data.renamed.length > 0 ? `; ${data.renamed.length} renamed on collision` : ""
+        }; ${
           (data.removedDirs?.length ?? 0) + (data.removedFiles?.length ?? 0)
-        } generated item(s) removed. Run a from-zero compile to rebuild the wiki.`
+        } generated item(s) removed. Run a from-zero compile to rebuild the wiki.${
+          data.leftoverDuplicates && data.leftoverDuplicates.length > 0
+            ? ` Warning: ${data.leftoverDuplicates.length} duplicate(s) left in papers/duplicates/.`
+            : ""
+        }`
       );
       await Promise.all([load(false), loadCitations()]);
+      // The reset moved compiled papers back to the inbox and deleted derived
+      // artifacts — invalidate the client router cache so navigating back to
+      // the home page shows the fresh state (papers list, compile panel) without
+      // a manual refresh.
+      router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

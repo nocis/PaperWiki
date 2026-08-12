@@ -13,7 +13,7 @@ tags:
 milestone: diffusion-probabilistic-models
 subtopic: null
 numPages: 22
-addedAt: '2026-08-04'
+addedAt: '2026-08-13'
 rawPath: papers/compiled/denoising-diffusion-implicit-models.pdf
 pdfUrl: /pdfs/denoising-diffusion-implicit-models.pdf
 figures:
@@ -38,31 +38,23 @@ relations:
   - relation: extends
     slug: deep-unsupervised-learning-using-nonequilibrium-thermodynamics
     note: >-
-      Generalizes the diffusion probabilistic framework to non-Markovian forward
-      processes, enabling accelerated sampling while preserving the same
-      marginals and training objective.
-  - relation: contradicts
-    slug: deep-unsupervised-learning-using-nonequilibrium-thermodynamics
-    note: >-
-      Shows that Markovianity of the forward diffusion is not necessary;
-      non-Markovian processes with the same marginals yield faster samplers
-      without retraining.
+      Generalizes the diffusion probabilistic model framework to non-Markovian
+      forward processes while preserving the variational objective.
   - relation: extends
     slug: denoising-diffusion-probabilistic-models
     note: >-
-      Extends DDPM by defining a non-Markovian diffusion process with the same
-      marginals, enabling implicit sampling with fewer steps and no retraining.
+      Extends DDPM with an implicit, non-Markovian diffusion process enabling
+      deterministic and faster sampling.
 ---
 ## Essence
-DDIMs generalize denoising diffusion probabilistic models to a family of non-Markovian forward processes whose marginals match DDPM's, reusing the same training objective and pretrained networks. By choosing a deterministic generative process (implicit model), they turn sampling into ODE-like integration, yielding 10x-50x faster generation, latent-space consistency, meaningful interpolation, and low-error reconstruction.
+The paper introduces denoising diffusion implicit models (DDIMs), a class of iterative implicit probabilistic models that share the training objective of DDPMs but use non-Markovian diffusion processes to enable deterministic, accelerated sampling. DDIMs produce high-quality images 10 to 50 times faster than DDPMs, allow trade-offs between computation and sample quality, support semantically meaningful latent-space interpolation, and can reconstruct observations with low error.
 
 ## Contributions
-- Generalizes DDPMs to non-Markovian forward processes with identical marginals, preserving the same surrogate training objective (Theorem 1).
-- Introduces DDIM, a deterministic implicit generative model that uses a pretrained DDPM network without retraining.
-- Enables 10x-50x faster sampling (10-100 steps) while matching or exceeding DDPM sample quality at those step counts.
-- Shows consistency: the same latent x_T yields similar high-level features across different sampling trajectories.
-- Demonstrates semantically meaningful latent-space interpolation and low-error observation reconstruction via ODE-like encoding.
-- Connects the discrete iterative process to a neural ODE and to the probability-flow ODE of concurrent score-based SDE work.
+- Introduces a family of non-Markovian forward processes whose variational objective is equivalent to the DDPM training objective, so one pretrained DDPM network can be reused for many sampling procedures.
+- Defines DDIM, a deterministic implicit probabilistic model (σ=0) that samples with the same network but 10×–50× fewer steps, retaining high FID.
+- Enables smooth computation–quality trade-offs by selecting the sampling trajectory length τ and stochasticity η.
+- Shows consistency: fixed latent x_T yields similar high-level sample features across different trajectory lengths, enabling semantically meaningful latent interpolation.
+- Connects DDIM sampling to Euler integration of an ODE, allowing near-lossless encoding and reconstruction of observations from latent codes.
 
 ## Figures
 ![Figure 1](/figures/denoising-diffusion-implicit-models/figure_1.png)
@@ -80,18 +72,17 @@ DDIMs generalize denoising diffusion probabilistic models to a family of non-Mar
 ![Page 1](/figures/denoising-diffusion-implicit-models/page_1.png)
 
 ## Critical Analysis
-**Novel Insight**: *prior:* Diffusion models were assumed to require a Markovian forward process whose reverse must be simulated for all T steps (e.g., T=1000) to generate high-quality samples, making sampling orders of magnitude slower than GANs. / *update:* By generalizing to non-Markovian forward processes that share the same marginals, the DDPM objective remains valid, so a pretrained model can be sampled with a deterministic (implicit) DDIM process using far fewer steps, yielding 10-50x speedups and latent-space consistency.
+**Novel Insight**: *prior:* DDPMs require simulating the full reverse Markov chain because the generative process approximates the reverse of a fixed forward diffusion; thousands of steps are needed for high sample quality, making sampling far slower than GANs. / *update:* The DDPM training objective depends only on the marginals q(x_t|x_0), not the joint, so the Markovian forward process can be replaced by non-Markovian ones. Setting the stochasticity to zero yields a deterministic implicit model that can be sampled with 10–50× fewer steps, while also enabling latent-space semantics and ODE-based encoding.
 
-**Fundamental Limitations**: The paper focuses on sampling acceleration with fixed trained models and does not improve training; sample quality degrades for very short trajectories. Deterministic generation may reduce stochastic diversity. Reconstruction accuracy requires many steps. The non-Markovian construction and ODE equivalence are shown for the Gaussian case plus a discrete multinomial case, leaving broader continuous forward processes and higher-order ODE solvers as future work.
+**Fundamental Limitations**: Deterministic DDIM is marginally worse than the original DDPM at the full 1000-step setting on CIFAR10 (FID 4.04 vs 3.17 for the noisy DDPM baseline). The σ=0 extreme is not formally covered by Theorem 1 and must be approached as a limit. Accelerated trajectories trade sample quality for speed, and the non-Gaussian discrete extension is only sketched without empirical validation. Reconstruction error decreases with more steps but is not zero, so encoding is approximate.
 
-**Research Frontier**: The ODE view of DDIM established a research program: applying higher-order numerical integrators, continuous-time diffusion SDE/ODE solvers, distillation of few-step samplers, and DDIM inversion for image editing. Subsequent work extended determinism and consistency to consistency models and rectified flows, making fast deterministic sampling a standard design goal in diffusion-based generation.
+**Research Frontier**: The connection to neural ODEs suggests applying higher-order ODE solvers (e.g., Adams-Bashforth) to reduce discretization error and improve few-step sample quality. Non-Markovian forward processes beyond Gaussian, such as multinomial processes for discrete/combinatorial structures, remain to be explored empirically. The deterministic latent encodings could be used for downstream tasks requiring meaningful latent representations, and further implicit-model properties (e.g., inversion, editing) are open.
 
 ## Relations
-DDIM appears after the original nonequilibrium-thermodynamics diffusion formulation and the improved DDPM training of Ho et al.; it shares the score-matching/denoising objective line of Song & Ermon and runs concurrently with the probability-flow ODE framework of Song et al. (2020). Whereas earlier diffusion work treated the generative chain as the reverse of a fixed Markovian diffusion, DDIM shows that many non-Markovian joints have the same marginals and therefore permit deterministic, ODE-like sampling from an already trained model. This makes it a bridging work: it preserves the variational training paradigm while opening the path to accelerated, invertible diffusion samplers.
+Sohl-Dickstein et al. introduced diffusion probabilistic models as latent-variable models with a Markovian forward noising process and a learned reverse chain, and Ho et al. made them generate high-quality images at T=1000 steps. DDIM identifies that the training objective depends only on the marginals q(x_t|x_0), not the joint, and generalizes the forward process to a family of non-Markovian processes that share the same objective. This lets a single pretrained network be sampled with a deterministic, ODE-like procedure that is 10–50× faster, and it supersedes the fixed Markovian generative trajectory as the default efficient sampling choice while leaving training untouched.
 
-- **extends** [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]] — Generalizes the diffusion probabilistic framework to non-Markovian forward processes, enabling accelerated sampling while preserving the same marginals and training objective.
-- **contradicts** [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]] — Shows that Markovianity of the forward diffusion is not necessary; non-Markovian processes with the same marginals yield faster samplers without retraining.
-- **extends** [[denoising-diffusion-probabilistic-models]] — Extends DDPM by defining a non-Markovian diffusion process with the same marginals, enabling implicit sampling with fewer steps and no retraining.
+- **extends** [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]] — Generalizes the diffusion probabilistic model framework to non-Markovian forward processes while preserving the variational objective.
+- **extends** [[denoising-diffusion-probabilistic-models]] — Extends DDPM with an implicit, non-Markovian diffusion process enabling deterministic and faster sampling.
 ## Citations
 _2 of 41 citations linked to compiled papers._
 
@@ -120,7 +111,7 @@ _2 of 41 citations linked to compiled papers._
 23. Shakir Mohamed and Balaji Lakshminarayanan. Learning in implicit generative models. arXiv preprint arXiv:1610.03483, October 2016.
 24. Radford M Neal et al. Mcmc using hamiltonian dynamics. Handbook of markov chain monte carlo, 2(11):2, 2011.
 25. Alejandro F Queiruga, N Benjamin Erichson, Dane Taylor, and Michael W Mahoney. Continuous-in-depth neural networks. arXiv preprint arXiv:2008.02389, 2020.
-26. Martin Raphan and Eero P Simoncelli. Least squares estimation without priors or supervision. Neural computation, 23(2):374–420, February 2011. ISSN 0899-7667, 1530-888X.
+26. Martin Raphan and Eero P Simoncelli. Least squares estimation without priors or supervision. Neural computation, 23(2):374–420, February 2011.
 27. Danilo Jimenez Rezende and Shakir Mohamed. Variational inference with normalizing flows. arXiv preprint arXiv:1505.05770, May 2015.
 28. Danilo Jimenez Rezende, Shakir Mohamed, and Daan Wierstra. Stochastic backpropagation and approximate inference in deep generative models. arXiv preprint arXiv:1401.4082, 2014.
 29. Olaf Ronneberger, Philipp Fischer, and Thomas Brox. U-net: Convolutional networks for biomedical image segmentation. In International Conference on Medical image computing and computer-assisted intervention, pp. 234–241. Springer, 2015.

@@ -13,12 +13,14 @@ import type { ChatMessage } from "./llm";
 /** Defensive cap on bibliography extraction — the prompt demands EVERY entry; this only bounds the JSON. */
 export const MAX_REFERENCES = 150;
 
-export interface PaperAnalysis {
-  title: string;
+/**
+ * Deep analysis fields. Title and essence are NOT here — they are fixed facts
+ * produced by the title+essence phase and passed INTO this prompt as knowns.
+ */
+export interface DeepAnalysis {
   authors: string[];
   venue: string;
   publishedAt: string; // YYYY-MM or ""
-  essence: string;
   contributions: string[];
   /** Contrastive: prior = the field's received view; update = what this paper changes. */
   novelInsight: { prior: string; update: string };
@@ -47,8 +49,8 @@ export interface Classification {
   reason: string;
 }
 
-/** One LLM response covering analysis + classification (citation records are built separately by the slim map call). */
-export interface PaperMergedResponse extends PaperAnalysis {
+/** One LLM response covering deep analysis + classification. */
+export interface PaperMergedResponse extends DeepAnalysis {
   classification: Classification;
 }
 
@@ -58,12 +60,15 @@ export function paperMergedPrompt(opts: {
   kbIndex: string;
   topicTree: string;
   language: string;
+  /** Fixed facts from the title+essence phase — the deep call builds on them, never re-derives. */
+  knownTitle?: string;
+  knownEssence?: string;
 }): { system: string; user: string } {
   const system = `You are the maintainer of a research-paper wiki knowledge base. You analyze ONE new paper and return a strict JSON object containing TWO parts: the paper analysis and the milestone classification. You may read the full paper text for both parts.
 Part 1 — ANALYSIS. Rules:
 - "predecessors", "crossTopicImpacts" and "contradictions" may ONLY reference paper slugs from the EXISTING WIKI INDEX provided by the user. Never invent slugs. If none apply, use empty arrays.
 - Derive contributions from the delta between the field's prior art (the paper's own related work) and what the paper adds — never state them as isolated claims.
-- essence: 3 sentences max (scope, method, insight), under 600 characters.
+- When a KNOWN TITLE AND ESSENCE are provided, accept them as given: your analysis must agree with them and never contradict them.
 - contributions: 3-6 concise deltas, each under 200 characters.
 - references: the COMPLETE bibliography — every entry verbatim as printed in the paper, no truncation. At most ${MAX_REFERENCES} entries; omit only pure noise lines (page headers, section notes).
 - novelInsight: a contrastive pair — "prior" is the field's received view or assumption this paper pushes against (under 400 characters), "update" is what this paper changes about it (under 400 characters).
@@ -76,7 +81,7 @@ Part 2 — CLASSIFICATION (fitness check, mandatory; use the raw paper text, not
 - Shared keywords do NOT imply shared research questions.
 - If no existing topic is a genuine conceptual match, CREATE a new standalone topic. Misclassification is worse than a small new topic.
 - Topic tree has max depth 3. A "create" with parentSlug is only allowed if the parent is at depth <= 2.
-- Prefer assigning to an existing genuine fit over creating a near-duplicate topic.
+- CREATION IS THE EXCEPTION, NOT A DEFAULT: before choosing "create", weigh it against EVERY existing topic in the tree above. In "reason", explicitly name the 1-3 closest existing topics (by slug) and state, for each one, the specific research-question mismatch that disqualifies it. If any existing topic is a genuine fit, choose "assign" instead.
 - If a merged-parent topic (mode "merged") has a matching subtopic, assign with subtopicSlug set.
 - New topic slugs: kebab-case, short, conceptual (e.g. "self-evolving-memory-architectures").
 
@@ -92,17 +97,21 @@ EXISTING TOPIC TREE (slug — definition [mode, subtopics]):
 ${opts.topicTree || "(empty — no topics yet)"}
 
 PDF metadata title: ${opts.metaTitle ?? "(none)"}
-
+${
+  opts.knownTitle || opts.knownEssence
+    ? `\nKNOWN TITLE AND ESSENCE (fixed facts — accept them as given, do not re-derive):
+Title: ${opts.knownTitle ?? "(none)"}
+Essence: ${opts.knownEssence ?? "(none)"}\n`
+    : ""
+}
 PAPER TEXT (extracted, possibly truncated):
 ${opts.text}
 
 Return JSON with exactly these fields:
 {
-  "title": string,
   "authors": string[],
   "venue": string,
   "publishedAt": "YYYY-MM or empty string",
-  "essence": string,
   "contributions": string[],
   "novelInsight": { "prior": string, "update": string },
   "limitations": string,
@@ -118,6 +127,104 @@ Return JSON with exactly these fields:
               OR { "action": "create", "topic": { "slug": string, "name": string, "definition": string, "parentSlug": string|null, "tags": string[] }, "reason": string }
 }`;
 
+  return { system, user };
+}
+
+// ---------------------------------------------------------------------------
+// 1a2. Title + essence (the dedup key, extracted BEFORE any deep analysis —
+//      one slim call; duplicates are decided without paying for the deep pass)
+// ---------------------------------------------------------------------------
+
+export interface TitleEssence {
+  title: string;
+  essence: string;
+}
+
+export function titleEssencePrompt(opts: {
+  text: string;
+  metaTitle: string | null;
+  filename: string;
+  language: string;
+}): { system: string; user: string } {
+  const system = `You extract TWO facts about ONE research paper: its exact title and a concise essence. Return strict JSON: {"title": string|null, "essence": string|null}.
+Rules:
+- "title": the paper's actual title as printed in the document (usually near the top of page 1). Return null only if the text contains no extractable title (e.g. scanned pages with no text layer). Never invent, paraphrase, or reconstruct a title from context. Never return the filename.
+- "essence": 3 sentences max (scope, method, insight), under 600 characters. Base it on the abstract and the paper's own framing. Return null only if the text contains no usable content.
+- Respond with JSON only. Write essence in language "${opts.language}".`;
+  const user = `PDF filename: ${opts.filename}
+PDF metadata title (may be unreliable): ${opts.metaTitle ?? "(none)"}
+
+PAPER TEXT (extracted, possibly truncated):
+${opts.text}
+
+Return JSON: {"title": string|null, "essence": string|null}`;
+  return { system, user };
+}
+
+// ---------------------------------------------------------------------------
+// 1c. Dedup screen (title+essence of the new paper vs the compact history
+//     record — the SINGLE duplicate decision: score >= 0.9 means duplicate)
+// ---------------------------------------------------------------------------
+
+export interface DedupScreen {
+  /** Slug of the paper the incoming IS a duplicate of, or null when not a duplicate. */
+  slug: string | null;
+  /** 0-1 same-document confidence. 0 when nothing resembles. */
+  score: number;
+}
+
+/** Same-document confidence required to declare a duplicate (conservative — below this, compile). */
+export const DEDUP_SAME_SCORE = 0.9;
+
+export function dedupScreenPrompt(opts: {
+  title: string;
+  essence: string;
+  record: string;
+}): { system: string; user: string } {
+  const system = `You decide whether ONE new research paper is a duplicate of any paper in a wiki's compiled history. Return strict JSON: {"slug": string|null, "score": number}.
+Rules:
+- Compare the new paper's title AND essence against each record entry.
+- "same document" signals: near-identical title AND near-identical essence — re-drops under different filenames, preprint vs published version, a later identical retitle.
+- Distinct papers that merely share vocabulary or similar titles are NOT duplicates: their essences differ.
+- Mark the incoming as a duplicate ONLY when you are quite sure: the best match must have same-document confidence >= ${DEDUP_SAME_SCORE}. Otherwise return {"slug": null, "score": 0}.
+- score: 0-1 same-document confidence for the picked entry. Only slugs listed in the record are valid.
+- Respond with JSON only.`;
+  const user = `INCOMING (new drop):
+Title: ${opts.title}
+Essence: ${opts.essence}
+
+COMPILED HISTORY (slug — title — essence):
+${opts.record || "(empty history — no compiled papers yet)"}
+
+Return JSON: {"slug": string|null, "score": number}`;
+  return { system, user };
+}
+
+// ---------------------------------------------------------------------------
+// 1d. Topic merge detection (Confirm-tier — proposals only, never auto-applied)
+// ---------------------------------------------------------------------------
+
+export interface TopicMergePair {
+  slugA: string;
+  slugB: string;
+  reason: string;
+}
+
+export function topicMergePrompt(opts: {
+  topics: { slug: string; name: string; definition: string; parentSlug: string | null }[];
+}): { system: string; user: string } {
+  const system = `You detect near-duplicate milestone topics in a research-paper wiki topic tree. Return strict JSON: {"mergeCandidates": [{"slugA": string, "slugB": string, "reason": string}]}.
+Rules:
+- Pair ONLY topics covering the SAME research direction — their milestone definitions genuinely overlap. Shared vocabulary alone does NOT qualify (fitness is about the research question, not keywords).
+- Never pair a topic with itself, with its own parent, child, or subtopic.
+- Prefer pairs of siblings or leaves; a pair is useless if one topic already absorbs the other as a subtopic.
+- reason: one sentence (under 200 characters) naming the overlap.
+- Return an empty array when there are no genuine near-duplicates.
+- Respond with JSON only.`;
+  const user = `TOPIC TREE (slug — name — definition [parent]):
+${opts.topics.map((t) => `${t.slug} — ${t.name} — ${t.definition} [parent: ${t.parentSlug ?? "(root)"}]`).join("\n")}
+
+Return JSON: {"mergeCandidates": [{"slugA": string, "slugB": string, "reason": string}]}`;
   return { system, user };
 }
 

@@ -534,6 +534,18 @@ export async function runLint(opts: { applyFixes?: boolean; queueProposals?: boo
         autoFixable: false,
       });
     }
+    // A topic with sources but an empty body is a skeleton left by an
+    // interrupted run (the paper was written, synthesis never completed) —
+    // visible damage must not pass silently.
+    if (count > 0 && !topic.body.trim()) {
+      issues.push({
+        severity: "warning",
+        kind: "hollow-topic",
+        target: topic.fm.slug,
+        message: `topic page body is empty (${count} source${count === 1 ? "" : "s"}) — synthesis was interrupted; recompile to restore`,
+        autoFixable: false,
+      });
+    }
   }
 
   // Tag-to-parent: 3+ root standalone topics sharing a tag.
@@ -589,6 +601,23 @@ export async function runLint(opts: { applyFixes?: boolean; queueProposals?: boo
         kind: "missing-pdf",
         target: paper.fm.slug,
         message: `compiled PDF missing: papers/compiled/${paper.fm.slug}.pdf`,
+        autoFixable: false,
+      });
+    }
+  }
+
+  // Papers whose real title could not be extracted compile under "untitled-*",
+  // or keep a blank title when a meaningful filename fallback was used —
+  // surface both so the human can rename the page, PDF, and comments dir.
+  for (const paper of ctx.paperPages) {
+    if (paper.fm.slug.startsWith("untitled-") || !paper.fm.title?.trim()) {
+      issues.push({
+        severity: "warning",
+        kind: "untitled-paper",
+        target: paper.fm.slug,
+        message: `paper "${paper.fm.slug}" could not be titled automatically${
+          paper.fm.title?.trim() ? " (raw filename fallback)" : " (no title in frontmatter)"
+        } — rename it manually`,
         autoFixable: false,
       });
     }

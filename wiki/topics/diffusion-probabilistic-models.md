@@ -2,54 +2,51 @@
 slug: diffusion-probabilistic-models
 name: Diffusion Probabilistic Models
 definition: >-
-  Generative models that define a data distribution as the endpoint of a Markov
-  chain which gradually destroys structure through forward diffusion, and learn
-  a reverse diffusion process to restore it; DDPMs make this practical with a
-  variational-trained reparameterized reverse chain for high-quality synthesis,
-  and later generalizations replace the Markovian forward process with
-  non-Markovian proces…
+  Generative models that learn to reverse a forward process which gradually adds
+  noise to data, encompassing the original Markov chain formulation (diffusion
+  probabilistic models), the high-quality DDPM variant trained with a simplified
+  noise-prediction objective, and non-Markovian implicit generalizations
+  (denoising diffusion implicit models), enabling tractable or accelerated
+  sampling, likelihood…
 mode: standalone
 parent_milestone: null
 children: []
 subtopics: []
 tags:
-  - deep generative models
-  - diffusion probabilistic models
-  - unsupervised learning
-  - nonequilibrium thermodynamics
-  - density estimation
+  - generative-modeling
+  - deep-unsupervised-learning
+  - markov-chains
+  - nonequilibrium-thermodynamics
+  - likelihood-based
 ---
 ## Definition
-Generative models that define a data distribution as the endpoint of a Markov chain which gradually destroys structure through forward diffusion, and learn a reverse diffusion process to restore it; DDPMs make this practical with a variational-trained reparameterized reverse chain for high-quality synthesis, and later generalizations replace the Markovian forward process with non-Markovian processes with identical marginals, enabling deterministic ODE-like sampling while retaining tractable likelihoods and posterior inference.
+Generative models that learn to reverse a forward process which gradually adds noise to data, encompassing the original Markov chain formulation (diffusion probabilistic models), the high-quality DDPM variant trained with a simplified noise-prediction objective, and non-Markovian implicit generalizations (denoising diffusion implicit models), enabling tractable or accelerated sampling, likelihood evaluation, posterior conditioning, progressive lossy compression, and latent-space manipulation.
 
 ## Key Properties
-- Defines generative models as the finite-time reversal of a Markov diffusion chain, avoiding intractable normalization constants of flexible energy-based models [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]]
-- Derives a Jensen lower bound on log likelihood that reduces density estimation to regression on per-step Gaussian or binomial diffusion kernels [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]]
-- Achieves both flexibility and tractability, enabling exact sampling and cheap probability evaluation in models with thousands of layers [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]]
-- Supports multiplying a learned distribution by arbitrary factors, allowing posterior sampling for denoising and inpainting [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]]
-- Demonstrates state-of-the-art dead-leaves log likelihood and competitive MNIST/CIFAR-10 performance against GANs, MCGSMs, and GSNs [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]]
-- Bridges nonequilibrium thermodynamics and annealed importance sampling with deep generative model training [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]]
-- Introduces denoising diffusion probabilistic models (DDPMs) as a parameterized Markov chain trained with variational inference to reverse a fixed Gaussian diffusion process [[denoising-diffusion-probabilistic-models]]
-- Shows that diffusion models can synthesize high-quality images, achieving state-of-the-art FID 3.17 and IS 9.46 on unconditional CIFAR10, surpassing most published GAN results at the time [[denoising-diffusion-probabilistic-models]]
-- Derives an epsilon-prediction reparameterization of the reverse process that is equivalent to denoising score matching over multiple noise levels and to annealed Langevin dynamics during sampling [[denoising-diffusion-probabilistic-models]]
-- Proposes a simplified, unweighted mean-squared-error training objective (L_simple) that improves sample quality over the full variational bound, and shows fixed variances outperform learned diagonal variances [[denoising-diffusion-probabilistic-models]]
-- Interprets the variational bound as progressive lossy compression, showing diffusion models allocate most bits to imperceptible details and act as excellent lossy compressors [[denoising-diffusion-probabilistic-models]]
-- Establishes a connection between Gaussian diffusion and autoregressive decoding with a generalized bit ordering that cannot be expressed by reordering data coordinates [[denoising-diffusion-probabilistic-models]]
-- Generalizes DDPMs to a family of non-Markovian forward processes whose marginals match DDPM's, preserving the same surrogate training objective (Theorem 1) [[denoising-diffusion-implicit-models]]
-- Introduces DDIM, a deterministic implicit generative model that reuses a pretrained DDPM network without retraining [[denoising-diffusion-implicit-models]]
-- Enables 10x-50x faster sampling (10-100 steps) while matching or exceeding DDPM sample quality at those step counts [[denoising-diffusion-implicit-models]]
-- Shows latent-space consistency: the same latent x_T yields similar high-level features across different sampling trajectories, enabling meaningful interpolation and low-error reconstruction via ODE-like encoding [[denoising-diffusion-implicit-models]]
-- Connects the discrete iterative process to a neural ODE and to the probability-flow ODE of concurrent score-based SDE work [[denoising-diffusion-implicit-models]]
+- Defines the data distribution as the endpoint of a Markov chain that gradually destroys structure, with the model being the learned finite-time reversal of that chain [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]]
+- Reduces training to per-step regression of Gaussian (mean/covariance) or binomial (bit-flip) kernels, using a Jensen lower bound on log-likelihood expressed through tractable KL divergences [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]]
+- Provides a method to multiply the learned distribution by arbitrary positive functions via perturbed diffusion kernels, enabling easy posterior sampling for denoising and inpainting [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]]
+- Achieves exact sampling, cheap probability evaluation, and models with thousands of time steps, with state-of-the-art likelihoods on dead leaves and competitive results on MNIST and CIFAR-10 [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]]
+- Reparameterizes the reverse process to predict noise rather than the posterior mean, establishing a connection between diffusion models and denoising score matching with Langevin dynamics [[denoising-diffusion-probabilistic-models]]
+- Introduces a simplified, unweighted variational objective that improves sample quality and stabilizes training relative to the full variational bound [[denoising-diffusion-probabilistic-models]]
+- Achieves state-of-the-art unconditional image synthesis (FID 3.17 on CIFAR10), comparable to ProgressiveGAN on LSUN 256x256, establishing diffusion models as a high-fidelity generative family [[denoising-diffusion-probabilistic-models]]
+- Shows that diffusion decoding naturally induces progressive lossy compression, interpreted as a generalization of autoregressive decoding over a flexible bit ordering [[denoising-diffusion-probabilistic-models]]
+- Demonstrates via ablations that fixed reverse-process variances outperform learned diagonal variances and that epsilon prediction is critical for the simplified objective [[denoising-diffusion-probabilistic-models]]
+- Introduces non-Markovian forward processes whose variational objective is equivalent to the DDPM training objective, enabling one pretrained DDPM network to be reused for many sampling procedures [[denoising-diffusion-implicit-models]]
+- Defines DDIM, a deterministic implicit probabilistic model (σ=0) that samples with the same network but 10×–50× fewer steps, retaining high FID [[denoising-diffusion-implicit-models]]
+- Enables smooth computation–quality trade-offs by selecting the sampling trajectory length τ and stochasticity η [[denoising-diffusion-implicit-models]]
+- Shows consistency: fixed latent x_T yields similar high-level sample features across different trajectory lengths, enabling semantically meaningful latent interpolation [[denoising-diffusion-implicit-models]]
+- Connects DDIM sampling to Euler integration of an ODE, allowing near-lossless encoding and reconstruction of observations from latent codes [[denoising-diffusion-implicit-models]]
 
 ## Source Cluster
-- [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]] — "Deep Unsupervised Learning using Nonequilibrium Thermodynamics" (ICML 2015 (JMLR W&CP volume 37), 2015-07)
+- [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]] — "Deep Unsupervised Learning using Nonequilibrium Thermodynamics" (Proceedings of the 32nd International Conference on Machine Learning (ICML 2015), JMLR W&CP volume 37, Lille, France, 2015-07)
 - [[denoising-diffusion-implicit-models]] — "Denoising Diffusion Implicit Models" (ICLR 2021, 2021-05)
-- [[denoising-diffusion-probabilistic-models]] — "Denoising Diffusion Probabilistic Models" (34th Conference on Neural Information Processing Systems (NeurIPS 2020), 2020-12)
+- [[denoising-diffusion-probabilistic-models]] — "Denoising Diffusion Probabilistic Models" (34th Conference on Neural Information Processing Systems (NeurIPS 2020), Vancouver, Canada, 2020-12)
 
 ## Chronological Evolution
-- **2015-07** — [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]] introduces diffusion probabilistic models: a Markovian forward process gradually destroys data structure, and a learned reverse process restores it. Training maximizes a lower bound on log likelihood; the framework enables exact sampling, cheap likelihood evaluation, and posterior inference.
-- **2020-12** — [[denoising-diffusion-probabilistic-models]] builds on this framework and makes it practically powerful: a fixed Gaussian forward process combined with a parameterized reverse chain trained via variational inference yields state-of-the-art image generation (FID 3.17 on CIFAR10). Its epsilon-prediction reparameterization links diffusion models to denoising score matching and annealed Langevin dynamics, and its simplified objective becomes the standard DDPM training loss. It also interprets the diffusion bound as progressive lossy compression, connecting to autoregressive decoding.
-- **2021-05** — [[denoising-diffusion-implicit-models]] builds directly on pretrained DDPMs, generalizing the forward process to a family of non-Markovian processes that share the same marginals and training objective. It introduces a deterministic generative process (DDIM) that yields 10x-50x faster sampling, latent-space consistency, meaningful interpolation, and low-error reconstruction, and connects iterative sampling to neural ODEs and the probability-flow ODE of concurrent score-based SDE work.
+- **2015 - [[deep-unsupervised-learning-using-nonequilibrium-thermodynamics]]**: Introduces diffusion probabilistic models as a Markov chain that gradually destroys structure, with learned reverse process; provides tractable training via KL divergence and enables exact sampling, likelihood evaluation, and posterior conditioning.
+- **2020 - [[denoising-diffusion-probabilistic-models]]**: Revives diffusion models for high-quality synthesis; reparameterizes the reverse process to predict noise, introduces a simplified unweighted objective, and shows the connection to denoising score matching with Langevin dynamics; achieves state-of-the-art FID on CIFAR10, establishes progressive lossy compression, and provides the training recipe that later implicit models build upon.
+- **2021 - [[denoising-diffusion-implicit-models]]**: Builds on the DDPM training objective but replaces the Markovian forward process with non-Markovian processes whose variational objective is equivalent; introduces a deterministic sampler (DDIM) that runs 10–50× faster, supports computation–quality trade-offs, and connects sampling to ODE integration for latent-space interpolation and near-lossless reconstruction.
 
 ## Open Questions
 _None recorded._
