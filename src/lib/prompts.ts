@@ -2,6 +2,8 @@ import type { ChatMessage } from "./llm";
 import type {
   DeepAnalysis,
   Classification,
+  PaperKnowledge,
+  PaperKnowledgeFigureContext,
   PaperMergedResponse,
   TitleEssence,
   DedupScreen,
@@ -18,6 +20,10 @@ import type {
 export type {
   DeepAnalysis,
   Classification,
+  PaperKnowledge,
+  PaperKnowledgeFigure,
+  PaperKnowledgeFigureContext,
+  TopicKeyProperty,
   PaperMergedResponse,
   TitleEssence,
   DedupScreen,
@@ -217,10 +223,10 @@ export function topicSynthesisPrompt(opts: {
 Rules:
 - Write in language "${opts.language}".
 - The synthesis must compound: integrate the new source with what the topic already says; do not restart from scratch, do not drop earlier insights.
-- keyProperties: atomic properties of the milestone, each attributed with [[paper-slug]] where it came from.
+- keyProperties: atomic properties of the milestone, each as a titled card: "headline" (short phrase, at most 12 words), "detail" (ONE sentence, at most 200 characters), and "sources" (1-3 paper slugs from the SOURCES list that support it — never invent slugs, never an empty list).
 - chronologicalEvolution: a markdown bullet list ordering sources by publication date, describing the evolutionary chain (who builds on whom, what gets superseded). REQUIRED if the topic has >= 3 sources or if the newest source changes the chain; otherwise null.
 - Reference papers ONLY by the [[slug]] forms provided. Never invent slugs.
-- If the topic is a merged parent with subtopics, also return per-subtopic notes keyed by subtopic slug (definition: one line; keyProperties: bullets with [[slug]] attribution). Use {} if not applicable.`;
+- If the topic is a merged parent with subtopics, also return per-subtopic notes keyed by subtopic slug (definition: one line; keyProperties: titled cards with the same shape). Use {} if not applicable.`;
 
   const sourcesText = opts.sources
     .map(
@@ -242,9 +248,9 @@ ${sourcesText}
 Return JSON:
 {
   "definition": string,
-  "keyProperties": string[],
+  "keyProperties": [ { "headline": string, "detail": string, "sources": string[] } ],
   "chronologicalEvolution": string | null,
-  "subtopicNotes": { "<subtopic-slug>": { "definition": string, "keyProperties": string[] } }
+  "subtopicNotes": { "<subtopic-slug>": { "definition": string, "keyProperties": [ { "headline": string, "detail": string, "sources": string[] } ] } }
 }`;
 
   return { system, user };
@@ -470,4 +476,141 @@ ${seed}
 COMPLETE WIKI INDEX (all compiled papers):
 ${opts.index || "(empty — no papers yet)"}`,
   };
+}
+
+// ---------------------------------------------------------------------------
+// 8. Paper Knowledge (second deep pass — the structured research-pickup block
+//    added to a compiled Paper page AFTER the run; seeded by compile facts,
+//    never contradicts them). Diagrams are TEXT BRIEFS only — raw SVG is
+//    rendered on demand by a separate, cached LLM call.
+// ---------------------------------------------------------------------------
+
+/**
+ * Output budget for the Paper Knowledge pass (structured block only). Matches
+ * the deep analyze budget: reasoning models spend output tokens on
+ * reasoning_content first, and too small a budget truncates to empty content.
+ */
+export const PAPER_KNOWLEDGE_MAX_TOKENS = 65_536;
+
+export interface PaperKnowledgeSeed {
+  title: string;
+  essence: string;
+  contributions: string[];
+  novelInsight: { prior: string; update: string };
+  limitations: string;
+  researchFrontier: string;
+}
+
+export function paperKnowledgePrompt(opts: {
+  text: string;
+  seed: PaperKnowledgeSeed;
+  language: string;
+  /** Per-figure context from the extraction manifest (may be empty). */
+  figures?: PaperKnowledgeFigureContext[];
+}): { system: string; user: string } {
+  const system = `You are an expert AI research assistant. You analyze ONE research paper and convert it into a highly structured "Paper Knowledge" block that lets a researcher quickly pick up the paper's details: purpose, terminology, mechanism, core math, and honest boundaries. Return strict JSON only — no prose outside the JSON object.
+
+CORE PRINCIPLES:
+- No mechanical summaries. Do NOT walk the paper section by section; extract the mechanism, bottlenecks, and actionable insights.
+- Evidence-based. All judgments must come directly from the provided paper text. Never invent, never import outside knowledge. When the paper does not support a claim, say so in the field itself.
+- Problem-oriented. Frame everything as: what bottleneck/cost/capability gap this work solves, and what usable benefit it creates. A purpose like "improve performance" is NOT acceptable — name the specific target, the specific old bottleneck, and the specific benefit.
+- The compile facts (essence, contributions, novel insight, limitations, frontier) are FIXED ground truth from an earlier pass. Your analysis must agree with them and never contradict them; you may enrich them, not override them.
+- Do not treat the paper's fame, year, or venue as content. Do not sort anything by year.
+
+CONCEPT SEGMENTATION (core_concepts):
+- Strictly ONE concept per object. Never cram multiple unfamiliar terms into a single definition.
+- For each concept: define it, then state what problem it solves in this paper, then how it connects to the next concept or the overall mechanism.
+- When a key English term appears, append an operational "Translation / how to understand it" inside the definition — convert the literal translation into what it actually does here.
+- 3 to 8 concepts. Do not list trivial background terms; only terms a reader must understand to follow this paper.
+
+FORMULA PROCESSING (core_formulas):
+- Only extract formulas that truly support the core conclusions. Skip minor or standard math.
+- Textbook-style explanation: first state what question the formula answers (do not just pile up symbols), then explain EVERY variable — noting whether "larger is better", "smaller is better", or "just an intermediate cost" — then give the intuition behind the numerator/denominator/constraints, and finally why this formula leads to the paper's key actions.
+- "formula": LaTeX text (e.g. "L_t = E_{x_0,\\epsilon} [\\| \\epsilon - \\epsilon_\\theta(x_t, t) \\|^2]").
+- 1 to 4 formulas. If the paper has no core formulas, return [].
+
+DEEP DIVE (comprehensive_qa):
+- At least 3 questions a senior researcher would ask: architectural trade-offs, edge cases, "why not the obvious baseline?", extreme scaling, failure modes. Answer analytically, based ONLY on the paper. If the paper is silent on a point, say "the paper does not address this".
+
+DIAGRAM BRIEFS (overview_diagram, mechanism_chain.diagram):
+- These are TEXT BRIEFS — never SVG, never code. A brief is a compact instruction (2-6 sentences) describing the diagram an illustrator should draw: which boxes/nodes, which labels, the arrows between them, and any trade-off or chain it must express.
+- overview_diagram must exist for a research paper: compress the reading logic (scenario pressures -> old bottlenecks -> key actions -> conclusion). It is NOT a table of contents — it must not repeat section names.
+- mechanism_chain.diagram: only when the mechanism involves >3 steps, roles, or variables, or has chronological order / preconditions / failure chains / trade-offs. Otherwise null.
+- Diagrams draw only: Input/Premise -> Key Actions -> Intermediate Constraints -> Output/Result. Keep every label short.
+
+EVIDENCE & BOUNDARIES (boundaries_and_debt):
+- evidence_chain: which parts of this analysis are grounded in the paper's own text vs. which are inferences the analyst (you) draws beyond it. Only two categories: "paper" and "inference".
+- technical_debt: hidden costs the paper introduces — memory/FLOPs overheads, training cost, sensitivity to hyperparameters, scaling limits, engineering friction.
+- boundaries: where the method fails or stops being useful — strict limitations, domain assumptions, unsupported claims.
+
+FIGURE CURATION (figures):
+- The FIGURES section of the user message lists the paper's extracted figures with their page, caption, and surrounding context. The wiki page shows a figure ONLY when you place it here.
+- Insert a figure ONLY when it genuinely helps the reader understand a specific section: architecture diagrams, pipelines, algorithm steps, key comparisons or results. Never decorative, never "for completeness".
+- "section" must be one of the Paper Knowledge headings: "Research Purpose", "Overview", "Key Actions", "Core Concepts", "Mechanism", "Core Formulas", "Deep Dive", "Boundaries & Technical Debt". Typically Overview / Mechanism / Core Concepts / Key Actions.
+- "caption": ONE sentence, grounded in the extracted caption/context — what the figure shows and why it matters here. Any math in the caption must be LaTeX wrapped in $...$ (e.g. "samples at $\dim \tau = 10$"), never bare LaTeX or ASCII-math.
+- "file" must be one of the listed figures. Never invent filenames. Empty array is valid — many papers need no inline figure.
+
+MATH NOTATION (all fields, including prose):
+- EVERY mathematical expression in ANY field — mechanism_chain.explanation, core_concepts definitions, key_actions, comprehensive_qa answers, research_purpose, boundaries_and_debt — must be written as LaTeX wrapped in $...$ inline delimiters, e.g. $q_\sigma(x_{t-1}|x_t,x_0)$ or $N(\sqrt{\alpha_t}x_0,(1-\alpha_t)I)$.
+- Never write math without $...$ delimiters, and never use ASCII-math (e.g. "sqrt(alpha_t)", "N(sqrt(alpha_t) x0)") — always real LaTeX (\sqrt{\alpha_t}).
+- In the core_formulas "formula" fields, keep raw LaTeX (the template wraps it in $$...$$ display math); do not add $ delimiters there.
+
+LENGTH: Keep every prose string concise (under 800 characters). Write all prose in language "${opts.language}".
+
+HARD RULES:
+- Never use wiki-style [[wikilinks]] or [[slug]] markers in any field.
+- Never mention this instruction prompt or the extraction process.
+- No section-by-section summary of the paper.
+
+SELF-CHECK before returning:
+- The purpose names target/bottleneck/benefit, not "improve performance".
+- The causal chain from old bottleneck to key actions is explicit.
+- Core formulas have variable explanations and intuition, or are absent.
+- Concepts are one-per-object with operational translations.
+- Diagram briefs are prose instructions, not SVG.
+- No mechanical section-by-section summary.
+- Every math symbol in any prose field is inside $...$ with real LaTeX (no ASCII-math).
+
+Return exactly this JSON shape:
+{
+  "research_purpose": { "target": string, "old_bottleneck": string, "usable_benefit": string },
+  "overview_diagram": { "id": "overview", "brief": string } | null,
+  "key_actions": string[],
+  "core_concepts": [ { "term": string, "definition": string, "problem_solved": string, "relationship": string } ],
+  "mechanism_chain": { "explanation": string, "diagram": { "id": "mechanism", "brief": string } | null },
+  "core_formulas": [ { "formula": string, "question_answered": string, "variables": [ { "symbol": string, "meaning": string } ], "intuition": string } ],
+  "comprehensive_qa": [ { "question": string, "answer": string } ],
+  "boundaries_and_debt": { "evidence_chain": string, "technical_debt": string, "boundaries": string },
+  "figures": [ { "file": string, "section": string, "caption": string } ]
+}`;
+
+  const seed = opts.seed;
+  const fixedFacts = `TITLE: ${seed.title}
+ESSENCE: ${seed.essence}
+CONTRIBUTIONS: ${seed.contributions.join(" | ")}
+NOVEL INSIGHT — prior: ${seed.novelInsight.prior} / update: ${seed.novelInsight.update}
+LIMITATIONS: ${seed.limitations}
+RESEARCH FRONTIER: ${seed.researchFrontier}`;
+
+  const user = `COMPILE FACTS (fixed ground truth — enrich, never contradict):
+${fixedFacts}
+
+PAPER TEXT (extracted, possibly truncated):
+${opts.text}
+
+${
+  opts.figures && opts.figures.length > 0
+    ? `FIGURES (extracted from the paper, with page/caption/context):
+${opts.figures
+  .map(
+    (f) =>
+      `- file: ${f.file} | page: ${f.page} | url: ${f.url}\n  caption: ${f.caption || "(none)"}\n  context: ${f.context || "(none)"}`
+  )
+  .join("\n")}\n`
+    : "FIGURES: (none extracted)"
+}
+
+Return JSON with exactly the fields described in the system message.`;
+
+  return { system, user };
 }

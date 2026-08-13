@@ -96,9 +96,13 @@ interface ChatCompletionResponse {
   };
 }
 
-/** Transport-level POST. Throws LlmError on HTTP/network errors. */
-const LLM_REQUEST_TIMEOUT_MS = 120_000;
+/** Hard overall LLM request timeout (env-tunable: LLM_REQUEST_TIMEOUT_MS). */
+const LLM_REQUEST_TIMEOUT_MS = (() => {
+  const parsed = Number(process.env.LLM_REQUEST_TIMEOUT_MS);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 300_000;
+})();
 
+/** Transport-level POST. Throws LlmError on HTTP/network errors. */
 async function postChat(provider: LLMProviderDef, body: Record<string, unknown>): Promise<ChatCompletionResponse> {
   // Resolve the URL and key BEFORE the request: a missing key or a wrong
   // WIKI_LLM_BASE_URL override must surface as itself, not as a transport error.
@@ -208,7 +212,11 @@ function extractJson<T>(raw: string): T {
   }
 }
 
-/** Structured JSON completion with defensive parsing and one malformed-output retry. */
+/**
+ * Structured JSON completion with defensive parsing and one retry: both
+ * malformed JSON and empty-content completions (reasoning models that emit
+ * only reasoning_content and stop) are retried once with a compact budget.
+ */
 export async function llmJson<T>(opts: {
   provider: LLMProviderDef;
   model: string;
@@ -240,17 +248,10 @@ export async function llmJson<T>(opts: {
     }
   };
 
-  const content = await requestContent(messages);
-  try {
-    return extractJson<T>(content);
-  } catch (firstError) {
+  const runCompactRetry = async (sample: string): Promise<T> => {
     // Reasoning models can occasionally exhaust their output budget and emit
-    // truncated JSON. Retry the same task with an explicit compact-output
-    // budget and show a bounded sample of the malformed response for repair.
-    const sample =
-      content.length > 2000
-        ? `${content.slice(0, 1000)}\n...[truncated sample]...\n${content.slice(-1000)}`
-        : content;
+    // truncated JSON (or reasoning-only responses). Retry the same task with
+    // an explicit compact-output budget and show a bounded sample for repair.
     const retryMessages: ChatMessage[] = [
       {
         role: "system",
@@ -261,12 +262,38 @@ export async function llmJson<T>(opts: {
         content: `${opts.user}\n\nCRITICAL OUTPUT BUDGET:\n- Complete and close the entire JSON object.\n- Keep every prose string concise (under 800 characters).\n- Respect any per-field caps stated in the original prompt.\n- Omit no required fields.\n\nMALFORMED PREVIOUS RESPONSE (sample):\n${sample}`,
       },
     ];
-
     const retryContent = await requestContent(retryMessages);
+    return extractJson<T>(retryContent);
+  };
+
+  let content: string;
+  try {
+    content = await requestContent(messages);
+  } catch (firstCallError) {
+    // An empty-content completion (finish_reason stop with content empty —
+    // often the whole output budget went to reasoning_content) is worth one
+    // compact retry before declaring the call failed.
+    const message = firstCallError instanceof Error ? firstCallError.message : String(firstCallError);
+    if (!/empty response/i.test(message)) throw firstCallError;
     try {
-      return extractJson<T>(retryContent);
+      return await runCompactRetry("(empty response — no content was produced)");
     } catch (retryError) {
-      const firstMessage = firstError instanceof Error ? firstError.message : String(firstError);
+      const retryMessage = retryError instanceof Error ? retryError.message : String(retryError);
+      throw new Error(`LLM empty response retry failed. First: ${message}. Retry: ${retryMessage}`);
+    }
+  }
+
+  try {
+    return extractJson<T>(content);
+  } catch (firstError) {
+    const firstMessage = firstError instanceof Error ? firstError.message : String(firstError);
+    const sample =
+      content.length > 2000
+        ? `${content.slice(0, 1000)}\n...[truncated sample]...\n${content.slice(-1000)}`
+        : content;
+    try {
+      return await runCompactRetry(sample);
+    } catch (retryError) {
       const retryMessage = retryError instanceof Error ? retryError.message : String(retryError);
       throw new Error(`LLM JSON parse failed after compact retry. First: ${firstMessage}. Retry: ${retryMessage}`);
     }

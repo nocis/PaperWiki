@@ -23,7 +23,7 @@ import {
   type TopicFrontmatter,
   type TopicPage,
 } from "../../../src/lib/wiki";
-import { renderPaperBody, renderTopicBody } from "../../../src/lib/templates";
+import { renderPaperBody, renderTopicBody, normalizeKeyProperties, normalizeSubtopicNotes } from "../../../src/lib/templates";
 import { topicSynthesisPrompt, type TopicSynthesis } from "../../../src/lib/prompts";
 import { runCompileStep } from "../../../src/lib/runs";
 import { SYNTH_MAX_TOKENS } from "../budgets";
@@ -156,7 +156,6 @@ export async function writePaperPage(ctx: PaperCompileContext): Promise<void> {
     relations,
     citations: { rawReferences: ctx.rawReferences, matches: [] },
     milestoneAnchor: ctx.milestone,
-    figures: ctx.figures,
   });
 
   return runCompileStep(
@@ -233,7 +232,7 @@ export async function writeTopicPage(ctx: PaperCompileContext, synthesis: TopicS
       const topicBody = renderTopicBody({
         fm: currentTopic.fm,
         definitionProse: synthesis.definition,
-        keyProperties: synthesis.keyProperties ?? [],
+        keyProperties: normalizeKeyProperties(synthesis.keyProperties),
         sources: [
           ...freshSources.map((p) => ({
             slug: p.slug,
@@ -245,7 +244,7 @@ export async function writeTopicPage(ctx: PaperCompileContext, synthesis: TopicS
           { slug: ctx.slug, title: ctx.extraction.title, venue: ctx.analysis.venue ?? "", publishedAt: ctx.analysis.publishedAt ?? "", subtopic: ctx.subtopic },
         ],
         chronologicalEvolution: synthesis.chronologicalEvolution ?? null,
-        subtopicNotes: synthesis.subtopicNotes ?? {},
+        subtopicNotes: normalizeSubtopicNotes(synthesis.subtopicNotes),
       });
       await writePage(currentTopic.filePath, currentTopic.fm, topicBody);
     },

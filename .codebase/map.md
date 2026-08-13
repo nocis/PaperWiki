@@ -20,9 +20,10 @@ No test suite. Verification = `yarn build` + browser smoke tests, run manually.
 ## Entry points
 
 - Web app: `src/app/` — routes `/` (compile dashboard), `/wiki`, `/paper/<slug>`,
-  `/citations`, `/knowledge`, `/chat`, `/health`, `/figures`, `/pdfs`; API
-  routes under `src/app/api/` (chat, citations, comments, compile, health,
-  knowledge, llm).
+  `/citations`, `/knowledge`, `/chat`, `/health`, `/figures`, `/pdfs`,
+  `/diagrams/<slug>/<id>` (lazy diagram brief rendering); API routes under
+  `src/app/api/` (chat, citations, comments, compile, health, knowledge,
+  llm, paper-knowledge).
 - CLI pipelines (post-R4/R13 shape — the old single-file scripts are now thin
   drivers over module dirs):
   - `scripts/compile.ts` — ingest driver over `scripts/compile/`:
@@ -38,8 +39,9 @@ No test suite. Verification = `yarn build` + browser smoke tests, run manually.
   - Shared CLI plumbing: `scripts/lib/cli-utils.ts` (parseFlags/parseArgs/
     parseCitationsArgs/truncate; re-exports `errorMessage` from `src/lib/errors.ts`).
 - React components: `src/components/` — top-level panels (CitationGraph,
-  PdfViewer, ChatPanel, KnowledgeDashboard, PendingCompilePanel, …) plus
-  feature folders `compile/`, `knowledge/`, `graph/`, `health/`.
+  PdfViewer, ChatPanel, KnowledgeDashboard, PendingCompilePanel, DiagramSlot,
+  PaperKnowledgeStatus, …) plus feature folders `compile/`, `knowledge/`,
+  `graph/`, `health/` (incl. health/PaperKnowledgePanel).
 
 ## src/lib — domain core
 
@@ -56,7 +58,8 @@ No test suite. Verification = `yarn build` + browser smoke tests, run manually.
 | `errors.ts` | Single `errorMessage(err)` implementation — re-exported by `scripts/lib/cli-utils.ts`; no duplicate formatters anywhere. |
 | `jobs.ts` | Shared machinery for the three long-running background jobs (compile/citations/knowledge API routes): child spawn, output capture, optimistic "running" snapshot, provider guard. |
 | `extract.ts`, `extract-figures.ts` | PDF text extraction; best-effort figure extraction (never aborts a run). |
-| `templates.ts` | Deterministic page renderers. |
+| `templates.ts` | Deterministic page renderers (PAPER_KNOWLEDGE_SECTIONS as const; never-throw normalizeKeyProperties/normalizeSubtopicNotes). |
+| `wiki-ids.ts` | Pure id patterns (SLUG_RE, DIAGRAM_ID_RE, DIAGRAM_ID_IN_BODY_RE) — single source for slug/diagram-id validation across paper-knowledge, the paper-knowledge API route, diagrams/figures routes, WikiMarkdown. |
 | `prompts.ts`, `prompts/types.ts` | Structured prompt wrappers: title+essence, dedup screen (`DEDUP_SAME_SCORE` = 0.9 exported here), merged deep analyze+classify (title/essence as fixed facts), citation match, relation finalize, topic synthesis/merge, chat, knowledge. Shared prompt types in `prompts/types.ts`. |
 | `wiki-journal.ts`, `runs.ts`, `progress.ts`, `llm-availability.ts` | Journal append, run status/events + `COMPILE_STEP_CATALOG` (panel step list), progress files, LLM health checks. |
 
@@ -98,13 +101,60 @@ is the decisive duplicate signal).
 
 End-of-run: finalize-citations (one slim call per paper vs the FULL final
 index; self-heals interrupted runs) → finalize-relations (re-map vs full
-index) → consolidation-checks (Confirm-tier proposals only: split-topic,
-promote-subtopic, tag-to-parent, merge-topic — never auto-applied).
+  index) → consolidation-checks (Confirm-tier proposals only: split-topic,
+  promote-subtopic, tag-to-parent, merge-topic — never auto-applied).
+
+## Paper Knowledge (post-compile amend pipeline)
+
+`scripts/paper-knowledge/amend.ts` (driven by `scripts/paper-knowledge-runner.ts`,
+invoked at the end of `scripts/compile.ts` and via `POST /api/paper-knowledge`)
+runs one deep LLM pass per new paper, inserting a "## Paper Knowledge" block
+between `## Contributions` and `## Critical Analysis`
+(`patchPaperKnowledgeBlock` in templates.ts — anchor regex, append fallback;
+section stripping via `stripH2Section` preserves content before AND after the
+stripped section, so amend retries never truncate the paper).
+Ready state is TERMINAL (no regeneration except reset-to-zero + recompile);
+retry flips failed→pending + force-spawn (bypasses the alive guard, always 202).
+
+- Concurrency: `claimNextPaperKnowledge()` atomically flips the next
+  pending→running paper under `.log/paper-knowledge-claim.lock` (fs.open "wx",
+  stale-lock steal after 10s, 10x50ms contention retry); amend.ts is a
+  claim-drain loop — concurrent runners never double-process a slug; the reset
+  route's regex also clears the claim lock.
+- Figures: `scripts/extract_figures.py` writes
+  `papers/compiled/<slug>_figures/manifest.json` (file/page/caption/context/
+  kind); the amend LLM curates inline figures under Paper Knowledge H3s only
+  (empty curation is valid); `validatePaperKnowledge` enforces ≤6 figures,
+  manifest membership, section validity; the legacy `## Figures` pile is
+  dropped from the paper page (Figures tab is the gallery).
+- Rendering: Key Properties are titled cards {headline, detail, sources}
+  (normalized via never-throw normalizeKeyProperties — accepts legacy string
+  bullets and partial objects);
+  Boundaries & Technical Debt render as `#### Evidence chain` / `####
+  Technical debt` / `#### Boundaries`. Diagram slots render lazily via
+  `src/app/diagrams/[slug]/[id]/route.ts` (strips a trailing `.svg` from the
+  segment before id validation, then reads `${id}.svg`), cached by brief hash —
+  hasSvg only when the cached briefHash matches the current body brief (stale
+  SVG after retry amend fixed); retry never touches diagrams. `DiagramSlot.tsx`
+  derives the slug client-side from
+  `window.location.pathname` (prop fallback, disabled-hint placeholder).
+- WikiMarkdown (src/components/WikiMarkdown.tsx): diagram fence id comes from
+  the fence INFO STRING via `node.data?.meta` (```diagram overview →
+  lang="diagram", meta="overview"), falling back to the content's first line,
+  else a placeholder box — a diagram fence never renders as bare text.
+  figureMarkdown emits ALT-ONLY embeds — `![caption](/figures/<slug>/<file>)`,
+  caption in the image alt, no caption line (SCHEMA.md workflow 1b item 6
+  matches); the p override wraps a single-image paragraph in `<figure>` +
+  `<figcaption>`, rendering the alt through nested ReactMarkdown
+  (remark-math/rehype-katex) so `$...$` math typesets, with wrapBareMath
+  (`src/lib/math.ts`) pre-wrapping undelimited LaTeX runs (app-safe, shared
+  server+client); legacy `*Figure: ...*` caption lines (pre-R6 bodies) render
+  as plain italic text — no special centering.
 
 ## Docs (authoritative, not duplicated here)
 
 - `README.md` — full architecture (§3) and operational workflows (§4).
 - `wiki/SCHEMA.md` — the LLM operating manual (conventions, invariants, workflows).
 - `GRILL.md` — canonical domain glossary.
-- `docs/adr/` — ADRs 0001 (citation map), 0002 (knowledge layer), 0003 (relations in frontmatter), 0004 (dedup-first pipeline), 0005 (post-stabilization refactor).
+- `docs/adr/` — ADRs 0001 (citation map), 0002 (knowledge layer), 0003 (relations in frontmatter), 0004 (dedup-first pipeline), 0005 (post-stabilization refactor), 0006 (paper-knowledge-amend).
 - `PROGRESS.md` — compressed lean handoff (quick resume + environment sheet, scripts/-not-compiled caveat). `.codebase/` is the primary knowledge store; PROGRESS.md is only a quick-resume pointer. Note: `next build` does NOT typecheck `scripts/` — see notes.md.

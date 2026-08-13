@@ -48,6 +48,14 @@ _Avoid_: dedup, auto-merge
 The cognitive timeline at `wiki/journal/YYYY-MM.md` — dated entries auto-appended per operation (compile runs, resets).
 _Avoid_: changelog, log (that's `wiki/log.md`, the audit trail)
 
+**Paper Knowledge**:
+The structured research-pickup block (`## Paper Knowledge`) appended to a Paper page: Research Purpose, Key Actions, Core Concepts, Mechanism, Core Formulas, Deep Dive, Boundaries & Technical Debt. Present in the body = terminal, never regenerated except by recompile.
+_Avoid_: wiki knowledge, structured summary, deep analysis (that's the compile's analyze step)
+
+**Paper Knowledge amend**:
+The post-run background job (parallel, one slug per unit of work) that extracts Paper Knowledge from the full paper text seeded by compile facts. Retry exists only for failed papers; there is no operator CLI.
+_Avoid_: knowledge compile (that's the separate personal `knowledge/` operation), paper compile
+
 ## Relationships
 
 - A **Paper** belongs to exactly one **Topic** (`milestone`) and may have many **Relations** to other Papers.
@@ -55,6 +63,7 @@ _Avoid_: changelog, log (that's `wiki/log.md`, the audit trail)
 - A **Knowledge piece** can appear in many derived articles; an article groups pieces and grounds claims on **Papers**.
 - A **Favorite** is carried by one article and survives the **Compile** wipe.
 - A **Journal** entry records each **Compile** and each reset.
+- A **Paper** may carry a **Paper Knowledge** block, filled by the **Paper Knowledge amend**; the block's concepts stay page-local (never Topics or Concept pages).
 
 ## Example dialogue
 
@@ -71,3 +80,4 @@ _Avoid_: changelog, log (that's `wiki/log.md`, the audit trail)
 - "log" meant both the audit trail (`wiki/log.md`) and the journal — resolved: **Journal** is the cognitive timeline; `log.md` is the audit trail.
 - "compiled name" meant the slug that names the paper page, PDF, comments dir — resolved: **Slug** is canonical.
 - "duplicate folder" implied any same-name file; resolved: a **Duplicate** is an LLM-confirmed same paper — a same-name but distinct paper keeps compiling under a disambiguated **Slug**.
+- "knowledge compile" risked covering both the personal `knowledge/` pipeline and the structured Paper Knowledge extraction — resolved: **Knowledge Compile** (personal layer) vs **Paper Knowledge amend** (literature layer) are distinct operations.

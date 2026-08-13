@@ -58,11 +58,20 @@ export interface TopicMergePair {
   reason: string;
 }
 
+export interface TopicKeyProperty {
+  /** Short phrase (<= ~12 words) — the card title. */
+  headline: string;
+  /** One sentence (<= ~200 chars) expanding the headline. */
+  detail: string;
+  /** Paper slugs (from the synthesis SOURCES) supporting this property. */
+  sources: string[];
+}
+
 export interface TopicSynthesis {
   definition: string;
-  keyProperties: string[];
+  keyProperties: TopicKeyProperty[];
   chronologicalEvolution: string | null;
-  subtopicNotes: Record<string, { definition: string; keyProperties: string[] }>;
+  subtopicNotes: Record<string, { definition: string; keyProperties: TopicKeyProperty[] }>;
 }
 
 export interface QueryRetrieval {
@@ -106,4 +115,69 @@ export interface KnowledgeArticleResponse {
 
 export interface RelationFinalizeResponse {
   relations: { relation: string; slug: string; note: string }[];
+}
+
+// ---------------------------------------------------------------------------
+// Paper Knowledge (the structured research-pickup block, extracted by a second
+// deep pass over the full paper text, seeded by the compile facts).
+// ---------------------------------------------------------------------------
+
+export interface PaperKnowledgeDiagramBrief {
+  /** Diagram role on the paper page: "overview" or "mechanism". */
+  id: string;
+  /** Text description — NOT raw SVG; an on-demand LLM call renders it later. */
+  brief: string;
+}
+
+/** Per-figure context captured at extraction time (scripts/extract_figures.py). */
+export interface PaperKnowledgeFigureContext {
+  file: string;
+  page: number;
+  caption: string;
+  context: string;
+  kind: string;
+  url: string;
+}
+
+/** A curated figure placement inside the Paper Knowledge block. */
+export interface PaperKnowledgeFigure {
+  file: string;
+  /** One of the Paper Knowledge H3 section names (see PAPER_KNOWLEDGE_SECTIONS). */
+  section: string;
+  caption: string;
+}
+
+export interface PaperKnowledgeConcept {
+  /** English term with an operational "how to understand it" meaning. */
+  term: string;
+  definition: string;
+  problem_solved: string;
+  relationship: string;
+}
+
+export interface PaperKnowledgeFormulaVariable {
+  symbol: string;
+  meaning: string; // includes whether larger/smaller is better, or an intermediate cost
+}
+
+export interface PaperKnowledgeFormula {
+  /** LaTeX representation of the core formula. */
+  formula: string;
+  question_answered: string;
+  variables: PaperKnowledgeFormulaVariable[];
+  intuition: string;
+}
+
+export interface PaperKnowledge {
+  research_purpose: { target: string; old_bottleneck: string; usable_benefit: string };
+  /** Always present for a research paper (the opening reading logic). */
+  overview_diagram: PaperKnowledgeDiagramBrief | null;
+  key_actions: string[];
+  core_concepts: PaperKnowledgeConcept[];
+  mechanism_chain: { explanation: string; diagram: PaperKnowledgeDiagramBrief | null };
+  core_formulas: PaperKnowledgeFormula[];
+  comprehensive_qa: { question: string; answer: string }[];
+  boundaries_and_debt: { evidence_chain: string; technical_debt: string; boundaries: string };
+  /** Curated figure placements (empty = no figure is worth showing inline). */
+  figures: PaperKnowledgeFigure[];
 }

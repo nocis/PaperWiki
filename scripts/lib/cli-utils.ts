@@ -9,7 +9,7 @@
 type FlagMap = Record<string, string[]>;
 
 /** Tokenize `--flag value` and `--flag=value` arguments into a flag -> values map. */
-function parseFlags(argv: string[]): FlagMap {
+export function parseFlags(argv: string[]): FlagMap {
   const out: FlagMap = {};
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];

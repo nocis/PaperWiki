@@ -2,8 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import AnnotatePanel from "@/components/AnnotatePanel";
 import FigureGallery from "@/components/FigureGallery";
+import PaperKnowledgeStatus from "@/components/PaperKnowledgeStatus";
 import PaperTabs from "@/components/PaperTabs";
 import WikiMarkdown from "@/components/WikiMarkdown";
+import { listDiagramJobs, readCachedDiagrams } from "@/lib/paper-knowledge";
 import { loadDb, readPaperPages } from "@/lib/wiki";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +16,8 @@ export default async function PaperPage({ params }: { params: { slug: string } }
   if (!page) notFound();
 
   const frontmatter = page.fm;
+  const diagramCache = await readCachedDiagrams(frontmatter.slug, page.body);
+  const diagramInitialJobs = listDiagramJobs(frontmatter.slug);
   return (
     <article className="space-y-6">
       <div>
@@ -58,11 +62,17 @@ export default async function PaperPage({ params }: { params: { slug: string } }
           ) : undefined
         }
         wiki={
-          <WikiMarkdown
-            content={page.body}
-            paperSlugs={db.papers.map((candidate) => candidate.slug)}
-            topicSlugs={db.topics.map((topic) => topic.slug)}
-          />
+          <div>
+            <PaperKnowledgeStatus slug={frontmatter.slug} />
+            <WikiMarkdown
+              content={page.body}
+              paperSlugs={db.papers.map((candidate) => candidate.slug)}
+              topicSlugs={db.topics.map((topic) => topic.slug)}
+              paperSlug={frontmatter.slug}
+              diagramCache={diagramCache}
+              diagramInitialJobs={diagramInitialJobs}
+            />
+          </div>
         }
       />
     </article>

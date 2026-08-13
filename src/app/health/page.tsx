@@ -1,10 +1,12 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useHealthDashboard } from "@/components/health/useHealthDashboard";
 import { CitationMapPanel } from "@/components/health/CitationMapPanel";
 import { LintPanel } from "@/components/health/LintPanel";
 import { DangerZone } from "@/components/health/DangerZone";
+import PaperKnowledgePanel from "@/components/health/PaperKnowledgePanel";
 
 export default function HealthDashboard() {
   const {
@@ -30,6 +32,13 @@ export default function HealthDashboard() {
     resetToZero,
     startRebuild,
   } = useHealthDashboard();
+
+  // After a successful reset-to-zero the paper-knowledge status file is gone;
+  // bump the panel's refresh key so it re-fetches and clears the stale list.
+  const [resetEpoch, setResetEpoch] = useState(0);
+  useEffect(() => {
+    if (resetResult) setResetEpoch((epoch) => epoch + 1);
+  }, [resetResult]);
 
   return (
     <div className="space-y-8">
@@ -93,6 +102,8 @@ export default function HealthDashboard() {
       />
 
       {view !== "running" && report && <LintPanel report={report} />}
+
+      <PaperKnowledgePanel refreshKey={resetEpoch} />
 
       <DangerZone resetting={resetting} resetResult={resetResult} onReset={() => void resetToZero()} />
     </div>

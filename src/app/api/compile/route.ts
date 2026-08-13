@@ -10,6 +10,7 @@ import {
   startCompileRun,
 } from "@/lib/runs";
 import { attachJobFinalize, parseProviderRequest, runningSnapshot, spawnJob, type ActiveJob } from "@/lib/jobs";
+import { spawnPaperKnowledgeAmend } from "@/lib/paper-knowledge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,6 +98,9 @@ export async function POST(request: NextRequest) {
 
   // Spawn the compiler directly with node --import tsx — no `yarn` indirection
   // (no PATH dependence, works identically on all platforms without a shell).
+  // PAPERWIKI_DEFER_AMEND=1: the compiler enqueues Paper Knowledge but does
+  // not run it — this route spawns a separate background amend job after the
+  // compiler child succeeds, so the compile run itself finishes first.
   const active = spawnJob({
     runId,
     command: process.execPath,
@@ -104,6 +108,7 @@ export async function POST(request: NextRequest) {
     env: {
       PAPERWIKI_COMPILE_RUN_ID: runId,
       PAPERWIKI_COMPILE_SOURCE: "ui",
+      PAPERWIKI_DEFER_AMEND: "1",
       WIKI_LLM_PROVIDER: provider.id,
       WIKI_LLM_MODEL: model,
     },
@@ -113,16 +118,24 @@ export async function POST(request: NextRequest) {
   });
   globalThis.__paperwikiCompile = active;
 
-  attachJobFinalize(active, "__paperwikiCompile", "compile", (result) =>
-    markCompileProcessFinished({
+  attachJobFinalize(active, "__paperwikiCompile", "compile", async (result) => {
+    await markCompileProcessFinished({
       runId,
       ok: result.ok,
       message: result.ok
         ? "Compiler process exited successfully."
         : `Compiler process exited with code ${result.exitCode ?? "unknown"}.`,
       outputTail: result.output,
-    })
-  );
+    });
+    // Post-compile Paper Knowledge amend (pending entries only — runs in the
+    // background, never blocks browsing).
+    if (result.ok) {
+      const runId = await spawnPaperKnowledgeAmend(provider, model);
+      if (runId === null) {
+        console.log("Paper Knowledge amend already running — new pending entries wait for the next trigger.");
+      }
+    }
+  });
 
   return NextResponse.json(
     {

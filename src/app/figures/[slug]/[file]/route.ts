@@ -2,11 +2,11 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { NextResponse } from "next/server";
 import { FIGURES_DIR_FOR } from "@/lib/extract-figures";
+import { SLUG_RE } from "@/lib/wiki-ids";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/i;
 const FILE_RE = /^[a-z0-9][a-z0-9._-]*\.(png|jpe?g|webp)$/i;
 
 const CONTENT_TYPES: Record<string, string> = {

@@ -3,7 +3,9 @@ import * as path from "path";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import matter from "gray-matter";
+import PaperKnowledgeStatus from "@/components/PaperKnowledgeStatus";
 import WikiMarkdown from "@/components/WikiMarkdown";
+import { readCachedDiagrams } from "@/lib/paper-knowledge";
 import { INDEX_MD, WIKI_DIR, loadDb } from "@/lib/wiki";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +30,8 @@ export default async function WikiPage({ params }: { params: { path?: string[] }
   const isTopic = typeof data.mode === "string";
   const isPaper = typeof data.milestone === "string" && typeof data.title === "string";
   const tags: string[] = Array.isArray(data.tags) ? data.tags : [];
+  const paperSlug = isPaper && typeof data.slug === "string" ? data.slug : undefined;
+  const diagramCache = paperSlug ? await readCachedDiagrams(paperSlug, parsed.content) : [];
 
   return (
     <article className="mx-auto max-w-3xl">
@@ -84,10 +88,13 @@ export default async function WikiPage({ params }: { params: { path?: string[] }
       </header>
 
       <div className="pt-2">
+        {paperSlug && <PaperKnowledgeStatus slug={paperSlug} />}
         <WikiMarkdown
           content={parsed.content}
           paperSlugs={db.papers.map((paper) => paper.slug)}
           topicSlugs={db.topics.map((topic) => topic.slug)}
+          paperSlug={paperSlug}
+          diagramCache={diagramCache}
         />
       </div>
     </article>

@@ -15,6 +15,7 @@ import {
   ROOT,
 } from "@/lib/wiki";
 import { KNOWLEDGE_INDEX_MD, KNOWLEDGE_LOG_MD, readArticles } from "@/lib/knowledge";
+import { isPaperKnowledgeRunning } from "@/lib/paper-knowledge";
 import {
   readCitationsStatus,
   readCompileStatus,
@@ -35,15 +36,17 @@ function bad(message: string, status = 400) {
 }
 
 async function isAnyRunActive(): Promise<boolean> {
-  const [compile, citations, knowledge] = await Promise.all([
+  const [compile, citations, knowledge, paperKnowledge] = await Promise.all([
     readCompileStatus(),
     readCitationsStatus(),
     readKnowledgeStatus(),
+    isPaperKnowledgeRunning(),
   ]);
   return (
     compile?.status === "running" ||
     citations?.status === "running" ||
-    knowledge?.status === "running"
+    knowledge?.status === "running" ||
+    paperKnowledge
   );
 }
 
@@ -179,7 +182,7 @@ export async function POST(request: NextRequest) {
     logEntries = [];
   }
   for (const name of logEntries) {
-    if (/^(compile|citations|knowledge)-(status\.json|progress\.jsonl)$/.test(name)) {
+    if (/^(compile|citations|knowledge|paper-knowledge)-(status\.json|progress\.jsonl|output\.log|claim\.lock)$/.test(name)) {
       try {
         await fs.rm(path.join(LOG_DIR, name), { force: true });
         removedFiles.push(path.join(LOG_DIR, name));
@@ -195,6 +198,7 @@ export async function POST(request: NextRequest) {
     }`,
     `favorite articles kept: ${keptFavorites.length > 0 ? keptFavorites.join(", ") : "(none)"}`,
     `kept: wiki/SCHEMA.md, wiki/journal/, knowledge/pieces/, comments/`,
+    `cleared: paper knowledge blocks (wiki page wipe), diagram caches (papers/compiled/<slug>_diagrams/), paper-knowledge status`,
   ]);
 
   return NextResponse.json({

@@ -58,6 +58,8 @@ import {
   updateCompileRun,
 } from "../src/lib/runs";
 import { DEDUP_SAME_SCORE } from "../src/lib/prompts";
+import { enqueuePaperKnowledge } from "../src/lib/paper-knowledge";
+import { runPaperKnowledgeAmend } from "./paper-knowledge/amend";
 import { finalizeCitations, finalizeRelations, consolidationChecks } from "./compile/finalize";
 import { moveToDuplicates } from "./compile/helpers";
 import { analyzeClassify, extractFigures, writeCitationMap } from "./compile/steps/analyze";
@@ -254,6 +256,11 @@ async function processPdf(
 
   const compiledPaper = await rebuildDerivedFiles(ctx);
 
+  // Paper Knowledge: queue the structured-knowledge pass for this paper. The
+  // entry is created here (at persist time) so an aborted run still leaves a
+  // pending entry that the next amend pass picks up.
+  await enqueuePaperKnowledge([ctx.slug]);
+
   await recordCompileEvent({
     ...paperCtx,
     slug: ctx.slug,
@@ -393,6 +400,27 @@ async function main(): Promise<void> {
       console.log(`\n${proposals} reorganization proposal(s) queued in wiki/proposals.md`);
     }
 
+    // Paper Knowledge amend: parallel structured-knowledge pass over THIS
+    // run's papers (pending entries only). The web compile path defers it —
+    // the compile API route spawns a dedicated background job after the
+    // compiler child exits (PAPERWIKI_DEFER_AMEND=1), so the compile run
+    // itself finishes before the amend starts.
+    let knowledgeStats: { attempted: number; ready: number; failed: number } | null = null;
+    if (compiled.length > 0) {
+      if (process.env.PAPERWIKI_DEFER_AMEND) {
+        console.log(
+          `\nPaper Knowledge amend deferred — ${compiled.length} paper(s) queued, background job will pick them up.`
+        );
+      } else {
+        try {
+          knowledgeStats = await runPaperKnowledgeAmend({ provider, model, language: LANGUAGE });
+        } catch (err) {
+          // The amend is supplementary — a bug in it must not fail the compile run.
+          console.error(`Paper Knowledge amend failed: ${errorMessage(err)}`);
+        }
+      }
+    }
+
     console.log(`\nDone. ${compiled.length} paper(s) compiled:`);
     for (const p of compiled) {
       console.log(`  - ${p.slug} → topic ${p.milestone}`);
@@ -415,6 +443,11 @@ async function main(): Promise<void> {
       `citations linked: ${citationsMatched}/${citationsTotal}`,
       ...(proposals > 0 ? [`proposals queued: ${proposals}`] : []),
       ...(skipped.length > 0 ? [`duplicates skipped: ${skipped.join(", ")}`] : []),
+      ...(knowledgeStats
+        ? [`paper knowledge: ${knowledgeStats.ready}/${knowledgeStats.attempted} ready${knowledgeStats.failed > 0 ? ` (${knowledgeStats.failed} failed)` : ""}`]
+        : process.env.PAPERWIKI_DEFER_AMEND && compiled.length > 0
+          ? [`paper knowledge: ${compiled.length} queued (background amend deferred)`]
+          : []),
       `provider: ${provider.id} · model: ${model}`,
     ]);
 

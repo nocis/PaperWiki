@@ -80,8 +80,12 @@ you and the maintainer.
 9. **Figures co-locate with the archive.** A paper's extracted figures live in
    `papers/compiled/<slug>_figures/` (named after the canonical slug) and are
    served at `/figures/<slug>/<file>`. The paper frontmatter lists them in
-   `figures[]`, and the paper body embeds them under `## Figures` with absolute
-   `/figures/...` URLs. Missing files or frontmatter/body mismatches are lint
+   `figures[]`. The wiki body has NO `## Figures` pile: the full gallery is
+   shown by the paper route's Figures tab (from `figures[]`), and the wiki
+   body embeds figures ONLY where the Paper Knowledge amend curates them
+   inline (with captions). The extraction manifest
+   (`papers/compiled/<slug>_figures/manifest.json` — file/page/caption/context
+   per figure) feeds the amend's figure curation. Missing files are lint
    violations.
 10. **Lint tiers.** Mechanical violations (reciprocal `cites`/`citedBy`,
     Feeds milestone sync, pruning broken figure references) are auto-fixed and
@@ -117,23 +121,65 @@ rawPath, pdfUrl, figures[], cites[], citedBy[], relations[]`.
 `relations[]` is the structured form of the `## Relations` body: entries
 `{ relation: builds-on|extends|supersedes|contradicts|impacts, slug, note }`
 referencing compiled papers only — lint keeps body and frontmatter in sync.
-Sections: `## Essence`, `## Contributions`, `## Figures` (markdown embeds of
-`/figures/<slug>/<file>`, when figures exist), `## Critical Analysis`
+Sections: `## Essence`, `## Contributions`, `## Critical Analysis`
 (Novel Insight / Fundamental Limitations / Research Frontier),
 `## Relations` (temporal context first), `## Citations` (the raw reference
 list verbatim, numbered as extracted by the analyze LLM; entries resolved to
 compiled papers get `→ [[slug]]`; header shows "N of M citations linked"),
-`## Feeds`.
+`## Feeds`. No `## Figures` section — the gallery lives in the paper route's
+Figures tab (`frontmatter.figures[]`); wiki-body figure embeds appear only via
+the Paper Knowledge amend's curated inline placement.
 
 **Novel Insight is contrastive.** New compiles emit it as a `prior → update`
 pair: `prior` = the field's received view the paper pushes against, `update` =
 what the paper changes about it. Legacy pages with plain prose render as-is.
 
+**Paper Knowledge is a structured second layer** (added by the post-run Paper
+Knowledge amend, see Workflow 1b). A body containing `## Paper Knowledge` is
+TERMINAL — the amend never rewrites it; regeneration requires a full
+recompile. The block sits between `## Contributions` and `## Critical
+Analysis`. Sections (one concept per subsection):
+
+- `### Research Purpose` — Target / Bottleneck / Usable benefit (never a vague
+  "improves performance").
+- `### Overview` + `### Mechanism` — TEXT-BRIEF diagram fences (```diagram
+  overview / mechanism) rendered lazily as placeholder + clickable SVG; never
+  raw SVG in the body.
+- `### Key Actions` — exact deltas the paper made.
+- `### Core Concepts` — `#### <term>` with Definition / Problem it solves /
+  Connection; operational "how to understand it" for first-occurrence terms.
+- `### Core Formulas` — KaTeX `$$…$$` display math with the question answered,
+  per-variable meaning (larger/smaller-is-better), and intuition.
+- `### Deep Dive` — ≥3 senior-researcher questions.
+- `### Boundaries & Technical Debt` — `#### Evidence chain` / `#### Technical
+  debt` / `#### Boundaries` subheadings; `evidence_chain` distinguishes claims
+  grounded in the paper vs. analyst inference (no repo axis).
+
+**Math in prose.** EVERY mathematical expression in ANY field (mechanism,
+concepts, key actions, QA, boundaries) is LaTeX wrapped in `$…$` inline
+delimiters (e.g. `$q_\sigma(x_{t-1}|x_t,x_0)$`). ASCII-math (`sqrt(alpha_t)`)
+is forbidden. `core_formulas` "formula" fields keep raw LaTeX (the template
+wraps them in `$$…$$`).
+
+**Curated figures.** The amend reads the extraction manifest
+(`papers/compiled/<slug>_figures/manifest.json`: file / page / caption /
+context / kind) and passes it to the knowledge LLM, which returns a curated
+`figures` plan (file / Paper Knowledge section / caption). A figure is embedded
+inline under its chosen section ONLY when it genuinely helps understanding;
+irrelevant figures never appear in the wiki body (they stay in the Figures
+tab). An empty plan (no useful figure) is valid. Figures render centered with
+the caption as a figcaption (`![caption](/figures/<slug>/<file>)`); the amend
+strips any legacy `## Figures` pile when it writes the block.
+
+Concepts are page-local: Paper Knowledge never creates `wiki/concepts/` pages.
+
 ### Topic page — `wiki/topics/<slug>.md` (split-out children: `wiki/topics/<parent>/<child>.md`)
 Frontmatter: `slug, name, definition, mode (standalone|merged|split),
 parent_milestone|null, children[], subtopics[], tags[]`.
-Sections: `## Definition`, `## Key Properties`, `## Source Cluster`,
-inline `### <Subtopic>` sections (merged mode), `## Chronological Evolution`
+Sections: `## Definition`, `## Key Properties` (titled cards — each property
+is a `### <headline>` with a one-line detail and `*Source: [[slug]]…*` links),
+`## Source Cluster`, inline `### <Subtopic>` sections (merged mode, each
+subtopic's properties as `#### <headline>` cards), `## Chronological Evolution`
 (when >= 3 sources or chain change), `## Open Questions`.
 
 ### Topic modes & consolidation
@@ -223,6 +269,45 @@ compile run fully succeeds. Per paper, in order:
 Never merge with hand edits, never edit `comments/`, never restate wiki
 content as a new paper, and never fabricate a topic to avoid a misclassification.
 
+### 1b. Paper Knowledge amend (post-run, parallel, background)
+
+The structured `## Paper Knowledge` block is extracted by a SECOND deep pass
+(one LLM call per paper) that reads the full paper text and the compile facts
+(title, essence, contributions, novel insight, limitations, frontier) as fixed,
+non-contradictable context. The figure extraction manifest
+(`papers/compiled/<slug>_figures/manifest.json`, written at compile time) is
+passed alongside: the LLM curates which figures deserve inline placement
+(section + grounded caption) and which are irrelevant.
+
+1. **Enqueue at persist time.** Each paper compiled this run gets a `pending`
+   status entry (`.log/paper-knowledge-status.json`) as it persists — an
+   aborted run still leaves pending entries that self-heal.
+2. **Trigger.** CLI `yarn compile` runs the amend in-process at the end of a
+   successful run; the web compile path spawns it as a separate background job
+   after the compiler child exits (never blocks browsing). There is NO operator
+   command for the amend itself.
+3. **Parallelism.** One slug per unit of work; default concurrency 3
+   (`PAPERWIKI_KNOWLEDGE_CONCURRENCY`, 1–8). Per-slug fail: one failure marks
+   that slug `failed`; the others continue. The runner drains pending entries
+   in a loop, so interrupted-run leftovers self-heal.
+4. **Terminal-ready.** `ready` blocks are never regenerated. Retry is available
+   ONLY for `failed` papers (paper page + `/health`); a retry re-extracts the
+   JSON block only and cleans the old block before writing — no half-failed
+   leftovers.
+5. **Lazy diagrams.** The amend stores only text briefs. A `Render diagram`
+   click (paper page) calls a separate LLM to produce the raw SVG, cached under
+   `papers/compiled/<slug>_diagrams/<id>.svg` + `<id>.meta.json` (brief hash).
+   The same brief reuses the cache; retry never touches diagram caches.
+6. **Curated figures.** The amend strips any legacy `## Figures` pile and
+   embeds only the LLM-curated figures inline under their Paper Knowledge
+   sections as `![caption](/figures/<slug>/<file>)` — the caption lives in the
+   image alt text and the wiki reader renders it as a centered figure with a
+   math-capable figcaption. An empty curation is valid; the full gallery
+   always remains in the Figures tab.
+7. **Reset.** Reset-to-zero clears status, diagram caches, and figure
+   manifests (all under `papers/compiled/` and `.log/`) and refuses while any
+   amend entry is running.
+
 ### 2. Answering questions (chat: `/chat`)
 
 1. **Retrieve** over `wiki/index.md` — pick at most 6 relevant pages, using
@@ -285,6 +370,43 @@ same archive exemption as the compile wipe). A `wiki/journal/` entry records
 the reset.
 
 ## Revision log
+
+- `2026-08-13` — Display fixes 2: diagram placeholders show no brief text
+  (tooltip only); curated-figure captions live in the image alt and render as
+  a figure + math-capable figcaption (works for existing bodies, no reset
+  needed); diagram SVG render raises its token budget (32k) and surfaces
+  errors as readable messages instead of empty-response crashes.
+
+- `2026-08-13` — Display fixes: diagram fences now take the id from the fence
+  info string (`node.data.meta`) — the previous content-line parser always
+  failed, degrading briefs to bare text; a diagram fence can never render as
+  bare text (graceful placeholder). Curated-figure captions are markdown lines
+  (`*Figure: …*`, centered, math-rendered) instead of figcaption/alt text, so
+  `$…$` LaTeX in captions typesets; the image renderer no longer wraps figures
+  in block elements inside paragraphs.
+
+- `2026-08-13` — Paper Knowledge reliability: retries run concurrently with
+  other papers' amends (cross-process atomic claiming of pending entries, no
+  "already running" block); LLM request timeout raised to 300s
+  (`LLM_REQUEST_TIMEOUT_MS`, env-tunable); Paper Knowledge output budget raised
+  to 65k tokens and empty-response completions self-retry once; the health
+  panel refreshes immediately after reset-to-zero.
+
+- `2026-08-13` — Paper Knowledge display round: block placed between
+  Contributions and Critical Analysis; diagram fences always render as
+  placeholder + clickable SVG slot (slug derived from the URL); inline math in
+  prose must be `$…$` LaTeX; curated figures centered with figcaption;
+  Boundaries & Technical Debt uses H4 subheadings.
+
+- `2026-08-13` — Paper Knowledge: figure curation (extraction manifest →
+  LLM-placed inline figures with captions; `## Figures` pile removed; no pile
+  in the wiki body); topic Key Properties as titled cards; `/wiki` renders
+  Paper Knowledge interactively; amend runner crash fix (parseFlags export).
+
+- `2026-08-13` — Paper Knowledge: structured second pass (terminology, core
+  formulas, mechanism, deep dive, boundaries) as a terminal `## Paper
+  Knowledge` block; lazy cached SVG diagrams; amend workflow 1b; retry only
+  for failed papers; reset clears knowledge + diagram cache.
 
 - `2026-08-04` — Workflow 1 gains the end-of-run relation finalize step
   (full-index re-map); reset workflow: favorited knowledge articles are kept.

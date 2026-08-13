@@ -15,6 +15,11 @@ Behavior:
   - Key page render: with --render-page1, additionally renders page 1 (the
     teaser/architecture page) at the given scale.
   - Deterministic naming: figure_1.png, figure_2.png, ... then page_1.png.
+  - Context manifest: writes manifest.json into <outdir> with one entry per
+    saved image: {file, page (1-based), caption (nearest text block below the
+    image), context (the text block overlapping the image's vertical span),
+    kind ("figure" | "page-render")}. The Paper Knowledge amend consumes this
+    so the LLM can place relevant figures contextually with grounded captions.
   - Writes PNG files into <outdir> (created if needed) and prints the saved
     filenames, one per line, to stdout. Diagnostics go to stderr.
 
@@ -24,6 +29,7 @@ individual image decode problems — those are skipped with a stderr note.
 """
 import argparse
 import hashlib
+import json
 import math
 import os
 import sys
@@ -37,7 +43,7 @@ except ImportError:  # pragma: no cover - older PyMuPDF installs
 def extract_images(doc: fitz.Document, outdir: str, min_dim: int, max_images: int, max_pixels: int, max_dim: int) -> list:
     seen_xrefs: set[int] = set()
     seen_hashes: set[str] = set()
-    saved: list[str] = []
+    saved: list = []
     count = 0
 
     for page in doc:
@@ -70,11 +76,31 @@ def extract_images(doc: fitz.Document, outdir: str, min_dim: int, max_images: in
                 name = f"figure_{count + 1}.png"
                 with open(os.path.join(outdir, name), "wb") as fh:
                     fh.write(pix.tobytes("png"))
-                saved.append(name)
+                saved.append({"file": name, "page": page.number + 1, "bbox": tuple(info["bbox"])})
                 count += 1
             except Exception as exc:  # noqa: BLE001 - best-effort per image
                 print(f"[figures] skip xref {xref}: {exc}", file=sys.stderr)
     return saved
+
+
+def figure_context(page: fitz.Page, bbox: tuple) -> tuple:
+    """(caption, context) for an image bbox on a page.
+
+    caption = first text block below the image (the figure caption);
+    context = the text block overlapping the image's vertical span (the
+    paragraph the figure belongs to), falling back to the caption.
+    """
+    try:
+        blocks = page.get_text("blocks")
+    except Exception:  # noqa: BLE001 - best-effort
+        return "", ""
+    text_blocks = [b for b in blocks if len(b) >= 7 and b[6] == 0 and str(b[4]).strip()]
+    x0, y0, x1, y1 = bbox
+    below = [b for b in text_blocks if b[1] >= y1 - 1]
+    caption = str(below[0][4]).strip() if below else ""
+    overlap = [b for b in text_blocks if b[1] <= y1 and b[3] >= y0]
+    context = str(overlap[-1][4]).strip() if overlap else caption
+    return caption, context
 
 
 def render_page(doc: fitz.Document, page_number: int, outdir: str, scale: float) -> str | None:
@@ -115,13 +141,46 @@ def main() -> int:
     try:
         os.makedirs(args.outdir, exist_ok=True)
         saved = extract_images(doc, args.outdir, args.min_dim, args.max_images, args.max_pixels, args.max_dim)
+        manifest = []
+        for item in saved:
+            page = doc.load_page(item["page"] - 1)
+            caption, context = figure_context(page, item["bbox"])
+            manifest.append(
+                {
+                    "file": item["file"],
+                    "page": item["page"],
+                    "caption": caption,
+                    "context": context,
+                    "kind": "figure",
+                }
+            )
+        names = [item["file"] for item in saved]
         if args.render_page1 and doc.page_count > 0:
             teaser = render_page(doc, 0, args.outdir, args.page_scale)
             if teaser:
-                saved.append(teaser)
-        for name in saved:
+                names.append(teaser)
+                try:
+                    page1_text = doc.load_page(0).get_text("text")[:1500]
+                except Exception as exc:  # noqa: BLE001 - best-effort
+                    print(f"[figures] page 1 text failed: {exc}", file=sys.stderr)
+                    page1_text = ""
+                manifest.append(
+                    {
+                        "file": teaser,
+                        "page": 1,
+                        "caption": "Page 1 render (teaser/architecture overview)",
+                        "context": page1_text,
+                        "kind": "page-render",
+                    }
+                )
+        if manifest:
+            manifest_path = os.path.join(args.outdir, "manifest.json")
+            with open(manifest_path, "w", encoding="utf-8") as fh:
+                json.dump(manifest, fh, indent=2, ensure_ascii=False)
+            print(f"[figures] wrote {len(manifest)} entry/ies to {manifest_path}", file=sys.stderr)
+        for name in names:
             print(name)
-        print(f"[figures] saved {len(saved)} figure(s) to {args.outdir}", file=sys.stderr)
+        print(f"[figures] saved {len(names)} figure(s) to {args.outdir}", file=sys.stderr)
         return 0
     finally:
         doc.close()
