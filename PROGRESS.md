@@ -1,24 +1,15 @@
 # PaperWiki — Progress Log
 
-> Session handoff document. Read this first when resuming in a new session.
-> Last updated: 2026-08-04.
+> Session handoff. Read `.codebase/` first (map.md = structure, notes.md = gotchas,
+> purpose.md = why). This file is the quick-resume + environment sheet.
+> Last updated: 2026-08-13.
 
-## Current Status
+## Status
 
-**All phases code-COMPLETE (A compiler/API, B UI, C figures + health lint, D knowledge layer).**
-**State: 3 papers compiled; citation map is match-only (0/2/1 resolved entries); knowledge layer live: 3 pieces, 2 articles, compile verified end-to-end.**
-**Verification: PARTIAL — `yarn build` + browser smoke tests are manual (user runs them).**
-
-Latest fixes shipped:
-
-- ✅ **API spam fix** — `/knowledge` no longer loops `GET /api/knowledge` (terminal-status effect now keys on status string, not object identity); stale "running" knowledge snapshots surface as failed via `readEffectiveKnowledgeStatus` in both the page and the API.
-- ✅ **Favorites / compile wipe** — `favorite: true` in `knowledge/articles/` frontmatter; compile wipes previously compiled articles except favorites; star toggles on `/knowledge` and article pages (`PATCH /api/knowledge/articles`); SCHEMA.md updated.
-- ✅ **SCHEMA.md = LLM operating manual** — role preamble, workflows (ingest / answer / maintain / knowledge), co-evolution revision log.
-- ✅ **Reset to zero** — `/health` Danger zone, double-confirm + server token (`{ confirm: "RESET" }`): moves `papers/compiled/*.pdf` + `papers/duplicates/` back to `papers/new/`, deletes wiki pages/index/log/proposals, derived dbs, figures, `.log/`, knowledge articles/index/log; keeps SCHEMA.md, journal, pieces, comments. Journal entry per reset.
-- ✅ **AutoWiki-inspired features** — contrastive Novel Insight (`prior → update`, new compiles; legacy pages render as-is); typed relations persisted as `relations[]` frontmatter (compile writes, lint syncs from `## Relations` body + verifies slugs); citation graph renders 3 relation edge classes (temporal blue / contradicts red / impacts dashed) with legend; compile runs + failures auto-append `wiki/journal/` entries.
-- ✅ **README + docs** — AutoWiki-style README (as-shipped posture, text-only showcase); GRILL.md glossary; ADR 0003 (relations in frontmatter).
-- ✅ **Bug round 2** — reset preserves favorited knowledge articles (selective wipe); citation graph: category filter (one edge type at a time) + counts, node labels, neighborhood highlight on hover, edge tooltips with notes/references, click-to-open info panel (title/topic/year/essence/relations/cites); relations accuracy: end-of-run finalize pass re-maps typed relations against the full final index (one slim call per compiled paper, code-side validation, body patched in place).
-- ✅ **Bug round 3** — compile pipeline redesign (dedup-first, sequential, incremental): full-text extraction (all pages, ~1M-char window-bounded); slim title+essence phase before any deep analysis; dedup screen as the SINGLE duplicate decision (title+essence vs relevance-bounded history record, same-document score ≥ 0.9 → `papers/duplicates/`, else compile + code-side slug disambiguation; confirm-compare call removed); restore rule for interrupted runs (matched paper missing its PDF → inbox PDF restored instead of misfiled); deep call receives title+essence as fixed facts; sequential fail-hard loop (worker pool + `withRunLock` removed); newest-first topic synthesis; panel: "not needed" badge for passed conditional steps, cancel no longer stuck (poll treats `cancelled` as terminal); reset-to-zero now `router.refresh()`es so home shows fresh state; budgets as named constants; ADR 0004; README §3.2 + SCHEMA §1 rewritten. **Unverified — user runs `yarn build` + smoke tests.**
+Feature-complete (compiler/API, UI, figures + health lint, knowledge layer).
+3 papers compiled (diffusion) under one milestone topic; knowledge layer live
+(3 pieces, 2 articles). Post-stabilization refactor (2026-08-13) DONE and
+user-verified — see `docs/adr/0005-post-stabilization-refactor.md`.
 
 ## Quick Resume
 
@@ -27,6 +18,9 @@ yarn build          # 1. typecheck — fix errors first (user runs; agents must 
 yarn dev            # 2. browser smoke
 bash scripts/figures.sh papers/compiled/<slug>.pdf /tmp/figs --render-page1   # figures standalone
 ```
+
+**Caveat:** `next build` does NOT compile `scripts/` — after any script change,
+smoke manually: `yarn compile`, `yarn citations`, `yarn lint:wiki`.
 
 ## Environment Notes
 
@@ -39,6 +33,7 @@ bash scripts/figures.sh papers/compiled/<slug>.pdf /tmp/figs --render-page1   # 
 
 ## Pointers
 
-- Wiki conventions/invariants/workflows: `wiki/SCHEMA.md` (the LLM operating manual — co-evolve it).
-- Architectural decisions: `docs/adr/0001-citation-map.md`, `docs/adr/0002-knowledge-layer.md`.
+- Structure/gotchas/why: `.codebase/` (map.md, notes.md, purpose.md) — authoritative.
+- LLM operating manual (conventions/invariants/workflows): `wiki/SCHEMA.md`.
+- Architecture: `README.md` §3–4; decisions: `docs/adr/` (0001–0005).
 - No git operations allowed (project rule).

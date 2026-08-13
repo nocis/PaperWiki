@@ -8,6 +8,7 @@
  * its key, and only server-side code reads the actual value.
  */
 import { httpJsonRequest, type HttpJsonResult } from "./llm-http";
+import { errorMessage } from "./errors";
 
 export interface LLMProviderDef {
   /** Stable id used in URLs, storage, and CLI args. */
@@ -45,7 +46,7 @@ export function getProvider(id: string): LLMProviderDef | undefined {
   return LLM_PROVIDERS.find((p) => p.id === id);
 }
 
-export interface CatalogProvider {
+interface CatalogProvider {
   id: string;
   label: string;
   models: string[];
@@ -57,7 +58,7 @@ export interface CatalogProvider {
   modelsError: string | null;
 }
 
-export interface LlmCatalogPayload {
+interface LlmCatalogPayload {
   defaultProviderId: string;
   providers: CatalogProvider[];
   /** ISO time of the last live model fetch. */
@@ -143,7 +144,7 @@ export async function publicCatalog(force = false): Promise<LlmCatalogPayload> {
           models: [],
           defaultModel: "",
           keySet: true,
-          modelsError: `could not fetch models (${err instanceof Error ? err.message : String(err)})`,
+          modelsError: `could not fetch models (${errorMessage(err)})`,
         };
       }
     })

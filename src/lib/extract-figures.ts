@@ -8,6 +8,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { promisify } from "util";
 import { PAPERS_COMPILED } from "./wiki";
+import { errorMessage } from "./errors";
 
 const execFileAsync = promisify(execFile);
 
@@ -18,7 +19,7 @@ export interface FigureInfo {
   url: string;
 }
 
-export const FIGURES_SCRIPT = path.join(process.cwd(), "scripts", "figures.sh");
+const FIGURES_SCRIPT = path.join(process.cwd(), "scripts", "figures.sh");
 export const FIGURES_DIR_FOR = (slug: string): string =>
   path.join(PAPERS_COMPILED, `${slug}_figures`);
 
@@ -57,7 +58,7 @@ export async function extractFigures(pdfPath: string, slug: string): Promise<Fig
     ], { timeout: TIMEOUT_MS });
     stderr = result.stderr;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     const detail = typeof err === "object" && err !== null && "stderr" in err
       ? String((err as { stderr?: unknown }).stderr ?? "").trim()
       : "";

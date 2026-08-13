@@ -1,9 +1,35 @@
-/**
- * Structured prompt wrappers for the LLM wiki pipeline.
- * Distilled from the AutoWiki skill's ingest workflow and adapted to a
- * batch compiler + web chat hub (no Obsidian, JSON responses, slug-based links).
- */
 import type { ChatMessage } from "./llm";
+import type {
+  DeepAnalysis,
+  Classification,
+  PaperMergedResponse,
+  TitleEssence,
+  DedupScreen,
+  TopicMergePair,
+  TopicSynthesis,
+  QueryRetrieval,
+  CitationMapResponse,
+  KnowledgeClusterArticle,
+  KnowledgeClusterResponse,
+  KnowledgeArticleResponse,
+  RelationFinalizeResponse,
+} from "./prompts/types";
+
+export type {
+  DeepAnalysis,
+  Classification,
+  PaperMergedResponse,
+  TitleEssence,
+  DedupScreen,
+  TopicMergePair,
+  TopicSynthesis,
+  QueryRetrieval,
+  CitationMapResponse,
+  KnowledgeClusterArticle,
+  KnowledgeClusterResponse,
+  KnowledgeArticleResponse,
+  RelationFinalizeResponse,
+} from "./prompts/types";
 
 // ---------------------------------------------------------------------------
 // 1. Paper analysis + classification (ONE merged call; citations are matched
@@ -12,47 +38,6 @@ import type { ChatMessage } from "./llm";
 
 /** Defensive cap on bibliography extraction — the prompt demands EVERY entry; this only bounds the JSON. */
 export const MAX_REFERENCES = 150;
-
-/**
- * Deep analysis fields. Title and essence are NOT here — they are fixed facts
- * produced by the title+essence phase and passed INTO this prompt as knowns.
- */
-export interface DeepAnalysis {
-  authors: string[];
-  venue: string;
-  publishedAt: string; // YYYY-MM or ""
-  contributions: string[];
-  /** Contrastive: prior = the field's received view; update = what this paper changes. */
-  novelInsight: { prior: string; update: string };
-  limitations: string;
-  researchFrontier: string;
-  references: string[];
-  predecessors: { slug: string; relation: string; note: string }[];
-  evolutionaryChain: { role: "origin" | "intermediate" | "terminal" | "fork"; note: string };
-  crossDomainOrigin: string | null;
-  crossTopicImpacts: { slug: string; note: string }[];
-  contradictions: { slug: string; note: string }[];
-  relationsContext: string;
-}
-
-export interface Classification {
-  action: "assign" | "create";
-  topicSlug?: string;
-  subtopicSlug?: string | null;
-  topic?: {
-    slug: string;
-    name: string;
-    definition: string;
-    parentSlug: string | null;
-    tags: string[];
-  };
-  reason: string;
-}
-
-/** One LLM response covering deep analysis + classification. */
-export interface PaperMergedResponse extends DeepAnalysis {
-  classification: Classification;
-}
 
 export function paperMergedPrompt(opts: {
   text: string;
@@ -135,10 +120,6 @@ Return JSON with exactly these fields:
 //      one slim call; duplicates are decided without paying for the deep pass)
 // ---------------------------------------------------------------------------
 
-export interface TitleEssence {
-  title: string;
-  essence: string;
-}
 
 export function titleEssencePrompt(opts: {
   text: string;
@@ -166,12 +147,6 @@ Return JSON: {"title": string|null, "essence": string|null}`;
 //     record — the SINGLE duplicate decision: score >= 0.9 means duplicate)
 // ---------------------------------------------------------------------------
 
-export interface DedupScreen {
-  /** Slug of the paper the incoming IS a duplicate of, or null when not a duplicate. */
-  slug: string | null;
-  /** 0-1 same-document confidence. 0 when nothing resembles. */
-  score: number;
-}
 
 /** Same-document confidence required to declare a duplicate (conservative — below this, compile). */
 export const DEDUP_SAME_SCORE = 0.9;
@@ -204,11 +179,6 @@ Return JSON: {"slug": string|null, "score": number}`;
 // 1d. Topic merge detection (Confirm-tier — proposals only, never auto-applied)
 // ---------------------------------------------------------------------------
 
-export interface TopicMergePair {
-  slugA: string;
-  slugB: string;
-  reason: string;
-}
 
 export function topicMergePrompt(opts: {
   topics: { slug: string; name: string; definition: string; parentSlug: string | null }[];
@@ -232,12 +202,6 @@ Return JSON: {"mergeCandidates": [{"slugA": string, "slugB": string, "reason": s
 // 2. Topic synthesis (Ingest Phase 4 — the compounding step)
 // ---------------------------------------------------------------------------
 
-export interface TopicSynthesis {
-  definition: string;
-  keyProperties: string[];
-  chronologicalEvolution: string | null;
-  subtopicNotes: Record<string, { definition: string; keyProperties: string[] }>;
-}
 
 export function topicSynthesisPrompt(opts: {
   topicName: string;
@@ -290,10 +254,6 @@ Return JSON:
 // 3. Query retrieval (chat hub, step 1: read the index, pick pages)
 // ---------------------------------------------------------------------------
 
-export interface QueryRetrieval {
-  pages: string[];
-  papers: string[];
-}
 
 export function queryRetrievePrompt(opts: { index: string; question: string }): {
   system: string;
@@ -322,13 +282,6 @@ Return JSON: { "pages": string[], "papers": string[] }`;
 // 4. Citation map (raw bibliography → resolved matches only)
 // ---------------------------------------------------------------------------
 
-export interface CitationMapResponse {
-  citations: {
-    /** 1-based position of the entry in the numbered reference list. */
-    entry: number;
-    matchedSlug: string;
-  }[];
-}
 
 export function citationMapPrompt(opts: { references: string[]; index: string }): {
   system: string;
@@ -358,19 +311,7 @@ Return JSON: { "citations": [ { "entry": number, "matchedSlug": string } ] }`;
 // 5. Knowledge Compile (user knowledge → overlapping topic articles)
 // ---------------------------------------------------------------------------
 
-export interface KnowledgeClusterArticle {
-  slug: string;
-  title: string;
-  definition: string;
-  pieceSlugs: string[];
-  paperSlugs: string[];
-  /** Code-side, overlap-derived after the cluster response is validated. */
-  relatedArticleSlugs?: string[];
-}
 
-export interface KnowledgeClusterResponse {
-  articles: KnowledgeClusterArticle[];
-}
 
 export function knowledgeClusterPrompt(opts: {
   pieces: { slug: string; kind: string; topics: string[]; body: string }[];
@@ -408,17 +349,6 @@ Return JSON: { "articles": [ { "slug": string, "title": string, "definition": st
   return { system, user };
 }
 
-export interface KnowledgeArticleResponse {
-  definition: string;
-  /** Markdown body of the ## Synthesis section — claims cite [[piece-slug]]. */
-  synthesis: string;
-  /** Evidence mapping of the article's claims against wiki papers. */
-  grounding: { slug: string; status: "supports" | "contradicts" | "unaddressed"; note: string }[];
-  novelty: string;
-  critique: string;
-  limitations: string;
-  frontier: string;
-}
 
 export function knowledgeArticlePrompt(opts: {
   title: string;
@@ -507,9 +437,6 @@ Rules:
 //    final index — the analyze pass saw only the pre-run index)
 // ---------------------------------------------------------------------------
 
-export interface RelationFinalizeResponse {
-  relations: { relation: string; slug: string; note: string }[];
-}
 
 export function relationFinalizePrompt(opts: {
   title: string;

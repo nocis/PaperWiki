@@ -2,7 +2,7 @@
 description: >
   Discovers and ranks the .codebase/ project-knowledge files relevant to the current task. Read-only, navigation-driven, never guesses a path it hasn't verified. Use before proposing an implementation plan or before writing code, to load only the project knowledge that's actually relevant — not the whole tree.
 mode: subagent
-model: deepseek/deepseek-v4-flash
+model: deepseek-v4-flash
 permission:
   read: allow
   glob: allow

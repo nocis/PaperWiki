@@ -4,7 +4,7 @@
  */
 import type { LlmErrorKind } from "./llm";
 
-export interface LlmCatalogProvider {
+interface LlmCatalogProvider {
   id: string;
   label: string;
   models: string[];

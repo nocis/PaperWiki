@@ -17,8 +17,8 @@ import { llmJson, type LLMProviderDef } from "./llm";
 import { citationMapPrompt, type CitationMapResponse } from "./prompts";
 import { writePage, type PaperPage } from "./wiki";
 
-export const CITATIONS_DIR = path.join(process.cwd(), "data", "citations");
-export const CITATION_MAP_PATH = path.join(CITATIONS_DIR, "map.json");
+const CITATIONS_DIR = path.join(process.cwd(), "data", "citations");
+const CITATION_MAP_PATH = path.join(CITATIONS_DIR, "map.json");
 
 export interface CitationRecord {
   /** 1-based position of the entry in the paper's raw reference list. */
@@ -27,7 +27,7 @@ export interface CitationRecord {
   matchedSlug: string;
 }
 
-export interface PaperCitationEntry {
+interface PaperCitationEntry {
   slug: string;
   /** The reference list extracted by the analyze LLM at compile time. */
   rawReferences: string[];
@@ -40,7 +40,7 @@ export interface PaperCitationEntry {
   citations: CitationRecord[];
 }
 
-export interface CitationMap {
+interface CitationMap {
   version: 1;
   updatedAt: string;
   papers: Record<string, PaperCitationEntry>;
@@ -98,7 +98,7 @@ export async function updatePaperCitations(
  * compiled slug (never invented, never the paper itself). Everything else is
  * dropped.
  */
-export function validateCitationRecords(
+function validateCitationRecords(
   records: unknown,
   rawCount: number,
   knownSlugs: ReadonlySet<string>,
@@ -130,7 +130,7 @@ export function matchedSlugsOf(records: CitationRecord[]): string[] {
 // Shared remap machinery (used by compile's finalize AND rebuild)
 // ---------------------------------------------------------------------------
 
-export interface CitationIndexEntry {
+interface CitationIndexEntry {
   slug: string;
   title: string;
   publishedAt: string;
@@ -240,7 +240,7 @@ const SECTION_HEADING_RE = /^## (Citations|References)\s*\n/m;
  * `## Citations` heading and legacy `## References` blocks, and appends before
  * `## Feeds` (or at the end) when neither exists.
  */
-export function replaceCitationsSection(body: string, rawReferences: string[], matches: CitationRecord[]): string {
+function replaceCitationsSection(body: string, rawReferences: string[], matches: CitationRecord[]): string {
   const section = renderCitationsSection(rawReferences, matches);
   const heading = body.match(SECTION_HEADING_RE);
   if (heading && heading.index !== undefined) {
@@ -287,7 +287,7 @@ export function citationCoverage(map: CitationMap, paperSlugs: string[]): Citati
   });
 }
 
-export interface CitationCoverageSummary {
+interface CitationCoverageSummary {
   papers: number;
   withMap: number;
   missingMap: number;

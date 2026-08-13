@@ -1,18 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { classifyLlmError, llmHealthCheck, resolveModel, resolveProvider } from "@/lib/llm";
-import type { LlmErrorKind } from "@/lib/llm";
+import type { LlmAvailability } from "@/lib/llm-availability";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-export interface LlmAvailability {
-  state: "available" | "unavailable";
-  kind: LlmErrorKind | null;
-  error: string | null;
-  provider: string;
-  model: string;
-  checkedAt: string;
-}
 
 // In-memory cache keyed "provider|model". Success is cached longer (the check
 // is a real LLM call); failures expire sooner so recovery is picked up quickly.

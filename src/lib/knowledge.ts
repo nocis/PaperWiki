@@ -15,12 +15,13 @@ import matter from "gray-matter";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { loadDb, slugify, uniqueSlug, today, type WikiDb } from "./wiki";
+import type { KnowledgeRunSnapshot } from "./runs";
 
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
 
-export const KNOWLEDGE_DIR = path.join(process.cwd(), "knowledge");
+const KNOWLEDGE_DIR = path.join(process.cwd(), "knowledge");
 export const KNOWLEDGE_PIECES_DIR = path.join(KNOWLEDGE_DIR, "pieces");
 export const KNOWLEDGE_ARTICLES_DIR = path.join(KNOWLEDGE_DIR, "articles");
 export const KNOWLEDGE_INDEX_MD = path.join(KNOWLEDGE_DIR, "index.md");
@@ -36,7 +37,7 @@ export async function ensureKnowledgeDirs(): Promise<void> {
 // Types
 // ---------------------------------------------------------------------------
 
-export interface KnowledgePieceFrontmatter {
+interface KnowledgePieceFrontmatter {
   slug: string;
   kind: "note" | "chat";
   /** Where the piece came from: comment id (note) or chat-<timestamp> (chat). */
@@ -72,8 +73,7 @@ export interface KnowledgeArticle {
   filePath: string;
 }
 
-export interface KnowledgeDb {
-  version: 1;
+interface KnowledgeDb {
   compiledAt: string | null;
   /** wiki-db updatedAt at the time of the last knowledge compile (staleness). */
   wikiUpdatedAt: string | null;
@@ -98,6 +98,35 @@ export interface KnowledgeDb {
     relatedArticles: string[];
     favorite: boolean;
   }[];
+}
+
+/** Payload view of a knowledge piece — the flat shape the UI renders. */
+export type KnowledgePiecePayload = KnowledgeDb["pieces"][number];
+/** Payload view of a knowledge article — the flat shape the UI renders. */
+export type KnowledgeArticlePayload = KnowledgeDb["articles"][number];
+
+/**
+ * Staleness: the wiki changed OR any piece was added/edited since the last
+ * knowledge compile. Never compiled (null) => not stale.
+ */
+export function computeKnowledgeStaleness(db: KnowledgeDb, wikiDb: WikiDb): boolean {
+  return (
+    db.compiledAt !== null &&
+    ((db.wikiUpdatedAt !== null &&
+      wikiDb.updatedAt !== null &&
+      new Date(db.wikiUpdatedAt) < new Date(wikiDb.updatedAt)) ||
+      db.pieces.some((p) => new Date(p.updatedAt ?? p.addedAt) > new Date(db.compiledAt!)))
+  );
+}
+
+/** Wire contract for the knowledge dashboard payload (API GET + server page). */
+export interface KnowledgeApiPayload {
+  pieces: KnowledgePiecePayload[];
+  articles: KnowledgeArticlePayload[];
+  compiledAt: string | null;
+  wikiUpdatedAt: string | null;
+  stale: boolean;
+  runStatus: KnowledgeRunSnapshot | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +209,6 @@ function firstParagraphOfSection(body: string, heading: string): string {
 export async function deriveKnowledgeDb(): Promise<KnowledgeDb> {
   const [pieces, articles, wikiDb] = await Promise.all([readPieces(), readArticles(), loadDb()]);
   const db: KnowledgeDb = {
-    version: 1,
     compiledAt: articles.length > 0 ? articles[0].fm.compiledAt : null,
     wikiUpdatedAt: wikiDb.updatedAt,
     pieces: pieces.map((p) => ({

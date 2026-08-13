@@ -46,7 +46,7 @@ export async function ensureDirs(): Promise<void> {
 // Types
 // ---------------------------------------------------------------------------
 
-export type TopicMode = "standalone" | "merged" | "split";
+type TopicMode = "standalone" | "merged" | "split";
 
 export interface PaperRelation {
   relation: string; // builds-on | extends | supersedes | contradicts | impacts
@@ -147,7 +147,7 @@ export interface WikiDb {
   proposals: Proposal[];
 }
 
-export interface LogEntry {
+interface LogEntry {
   date: string;
   operation: string;
   title: string;

@@ -10,6 +10,7 @@
  * Exit code: 0 when no errors remain (warnings are non-fatal), 1 otherwise.
  */
 import { runLint, summarize } from "../src/lib/lint-wiki";
+import { errorMessage } from "./lib/cli-utils";
 
 function parseArgs(argv: string[]): { checkOnly: boolean; queueProposals: boolean } {
   const flags = new Set(argv);
@@ -52,6 +53,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(`✗ lint failed: ${err instanceof Error ? err.message : String(err)}`);
+  console.error(`✗ lint failed: ${errorMessage(err)}`);
   process.exit(1);
 });

@@ -12,6 +12,7 @@
  */
 import { getProvider, LLM_PROVIDERS, DEFAULT_PROVIDER_ID, type LLMProviderDef } from "./llm-providers";
 import { httpJsonRequest, type HttpJsonResult } from "./llm-http";
+import { errorMessage } from "./errors";
 export type { LLMProviderDef };
 
 export interface ChatMessage {
@@ -32,14 +33,14 @@ export function resolveProvider(override?: string): LLMProviderDef {
   return provider;
 }
 
-export function listProviderIds(): string {
+function listProviderIds(): string {
   return LLM_PROVIDERS.map((p) => p.id).join(", ");
 }
 
 export type LlmErrorKind = "missing-key" | "auth" | "quota" | "unreachable" | "other";
 
 /** Categorized LLM failure — lets callers (UI, API routes) react per kind. */
-export class LlmError extends Error {
+class LlmError extends Error {
   kind: LlmErrorKind;
   constructor(kind: LlmErrorKind, message: string) {
     super(message);
@@ -51,7 +52,7 @@ export class LlmError extends Error {
 /** Best-effort kind classification for any thrown error. */
 export function classifyLlmError(err: unknown): { kind: LlmErrorKind; message: string } {
   if (err instanceof LlmError) return { kind: err.kind, message: err.message };
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   if (/is not set|API_KEY/i.test(message)) return { kind: "missing-key", message };
   if (/(401|403)/.test(message)) return { kind: "auth", message };
   if (/(402|429|quota|rate limit)/i.test(message)) return { kind: "quota", message };
@@ -187,7 +188,7 @@ export async function llmHealthCheck(provider: LLMProviderDef, model: string): P
 }
 
 /** Extract a JSON object from an LLM response, tolerating code fences and prose. */
-export function extractJson<T>(raw: string): T {
+function extractJson<T>(raw: string): T {
   let text = raw.trim();
   const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fence) text = fence[1].trim();

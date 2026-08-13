@@ -37,10 +37,17 @@ extends / supersedes / contradicts / impacts), prior/update, knowledge piece,
 favorite, compile, journal. Use these in code, docs, and conversation; avoid
 the aliases GRILL.md flags.
 
-## Current state (as of init, per PROGRESS.md)
+## Current state
+
+Snapshot taken at init (per PROGRESS.md, since compressed):
 
 Feature-complete across four phases (compiler/API, web UI, figures + health
 lint, knowledge layer). Reference corpus: 3 compiled papers on diffusion
 models (Sohl-Dickstein 2015; DDPM; DDIM) under one topic; 3 knowledge pieces
 compiled into 2 articles. Verification is manual — the maintainer runs
 `yarn build` and browser smoke tests; there is no automated test suite.
+
+For the live state, read `.codebase/` (this is the primary knowledge store);
+`PROGRESS.md` at the repo root is a compressed quick-resume handoff pointing
+here, and `docs/adr/0005-post-stabilization-refactor.md` covers the
+2026-08-13 refactor.

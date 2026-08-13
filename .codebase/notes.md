@@ -8,6 +8,7 @@
 
 ## Gotchas
 
+- `next build` (`yarn build`) does NOT typecheck `scripts/` — a green build never covers script edits. After any change under `scripts/`, smoke manually: `yarn compile`, `yarn citations`, `yarn lint:wiki` (caveat carried in the compressed PROGRESS.md handoff).
 - undici global fetch hangs at connect in this app env (family-0 happy-eyeballs; IPv6 fails fast, IPv4 instant). All LLM HTTP goes through `llm-http.ts` (family-4-pinned node:https + hard 30s timeout) — do not reintroduce global fetch for LLM calls.
 - `isGarbageName` (empty / pure digits / arXiv-id only) guards titles — NOT a filename-equality guard: fixture PDFs are named by title, so matching the filename rejects valid LLM titles into "untitled-…" fallbacks.
 - `deriveDb()` validates invariants and throws. Topic skeletons are written under the run lock BEFORE the referencing paper page, so an aborted run never leaves an orphan milestone ref.

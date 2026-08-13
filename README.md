@@ -108,7 +108,7 @@ moved aside when the LLM is quite sure. Interrupted runs self-heal: a page
 written without its PDF is detected by the screen and restored on the next
 compile.
 
-Context budgets (see `scripts/compile.ts`): full paper text, a
+Context budgets (see `scripts/compile/budgets.ts`): full paper text, a
 relevance-ordered KB index, and the topic tree are each bounded by named
 constants sized for a 1M-token model window — the KB index effectively covers
 every compiled paper until the window is exhausted.

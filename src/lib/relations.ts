@@ -11,15 +11,15 @@ import { llmJson, type LLMProviderDef } from "./llm";
 import { relationFinalizePrompt } from "./prompts";
 import type { PaperRelation } from "./wiki";
 
-export const RELATION_TYPES = ["builds-on", "extends", "supersedes", "contradicts", "impacts"] as const;
-export type RelationType = (typeof RELATION_TYPES)[number];
+const RELATION_TYPES = ["builds-on", "extends", "supersedes", "contradicts", "impacts"] as const;
+type RelationType = (typeof RELATION_TYPES)[number];
 
-export function isRelationType(value: string): value is RelationType {
+function isRelationType(value: string): value is RelationType {
   return (RELATION_TYPES as readonly string[]).includes(value);
 }
 
 /** Code-side validation: known slugs only, no self, allowed types, dedupe. */
-export function validateRelations(
+function validateRelations(
   raw: { relations?: unknown },
   knownSlugs: ReadonlySet<string>,
   selfSlug: string

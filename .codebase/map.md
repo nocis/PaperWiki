@@ -23,11 +23,23 @@ No test suite. Verification = `yarn build` + browser smoke tests, run manually.
   `/citations`, `/knowledge`, `/chat`, `/health`, `/figures`, `/pdfs`; API
   routes under `src/app/api/` (chat, citations, comments, compile, health,
   knowledge, llm).
-- CLI pipelines: `scripts/compile.ts` (ingest), `scripts/rebuild-citations.ts`,
-  `scripts/lint.ts`, `scripts/compile-knowledge.ts`, `scripts/figures.sh` +
-  `extract_figures.py`.
-- React components: `src/components/` (CitationGraph, PdfViewer, ChatPanel,
-  KnowledgeDashboard, etc.).
+- CLI pipelines (post-R4/R13 shape — the old single-file scripts are now thin
+  drivers over module dirs):
+  - `scripts/compile.ts` — ingest driver over `scripts/compile/`:
+    `context.ts` (PaperCompileContext), `budgets.ts` (token budgets),
+    `helpers.ts` (pure helpers), `finalize.ts` (end-of-run citation/relation
+    finalize + consolidation checks), `steps/{screen,analyze,persist}.ts`
+    (step functions, ids matched to COMPILE_STEP_CATALOG).
+  - `scripts/compile-knowledge.ts` — CLI driver over `scripts/knowledge/`
+    (`context.ts`, `helpers.ts`, `steps.ts`).
+  - `scripts/rebuild-citations.ts` — CLI driver over `scripts/citations/pipeline.ts`.
+  - `scripts/lint.ts` — CLI driver over `src/lib/lint-wiki.ts`.
+  - `scripts/figures.sh` + `extract_figures.py`; fixtures via `make_fixtures.py`.
+  - Shared CLI plumbing: `scripts/lib/cli-utils.ts` (parseFlags/parseArgs/
+    parseCitationsArgs/truncate; re-exports `errorMessage` from `src/lib/errors.ts`).
+- React components: `src/components/` — top-level panels (CitationGraph,
+  PdfViewer, ChatPanel, KnowledgeDashboard, PendingCompilePanel, …) plus
+  feature folders `compile/`, `knowledge/`, `graph/`, `health/`.
 
 ## src/lib — domain core
 
@@ -36,13 +48,16 @@ No test suite. Verification = `yarn build` + browser smoke tests, run manually.
 | `wiki.ts` | Wiki storage layer: paths, frontmatter I/O (gray-matter), db derivation, index/log/proposals. Source of truth = markdown under `wiki/`. |
 | `llm.ts`, `llm-providers.ts` | Shared OpenAI-compatible multi-provider LLM client. Env: `OPENCODE_API_KEY`, `DEEPSEEK_API_KEY`; optional `WIKI_LLM_PROVIDER` / `WIKI_LLM_MODEL` / `WIKI_LLM_BASE_URL`. Model catalog cache bypassable via `publicCatalog(force)` or `?refresh=1`. |
 | `llm-http.ts` | family-4-pinned node:https transport + hard 30s timeout — undici global fetch hangs in this env; all LLM HTTP goes through here. |
-| `prompts.ts` | Structured prompt wrappers: title+essence, dedup screen (`DEDUP_SAME_SCORE` = 0.9 exported here), merged deep analyze+classify (title/essence as fixed facts), citation match, relation finalize, topic synthesis/merge, chat, knowledge. |
 | `citations.ts` | Citation map (`data/citations/map.json`): verbatim reference lists + exact-match resolutions only. |
 | `relations.ts` | Typed relations; end-of-run finalize pass re-maps against the full final index, validated code-side. |
-| `knowledge.ts` | Knowledge layer: pieces (human-owned, Add-to-knowledge only) and derived articles (regenerated from zero; favorites survive the wipe). |
-| `lint-wiki.ts` | Invariant linter. |
+| `knowledge.ts` | Knowledge layer: pieces (human-owned, Add-to-knowledge only) and derived articles (regenerated from zero; favorites survive the wipe). Owns the API payload contract (`KnowledgeApiPayload`) + staleness computation — pages/UI import, never re-declare. |
+| `lint-wiki.ts` | Invariant linter driver — orchestrates the `LintRule`s in `lint/`. |
+| `lint/` | Per-rule lint modules (links, citations, relations, topics, archive, knowledge, state, types) — read by `lint-wiki.ts`, which is the only caller. |
+| `errors.ts` | Single `errorMessage(err)` implementation — re-exported by `scripts/lib/cli-utils.ts`; no duplicate formatters anywhere. |
+| `jobs.ts` | Shared machinery for the three long-running background jobs (compile/citations/knowledge API routes): child spawn, output capture, optimistic "running" snapshot, provider guard. |
 | `extract.ts`, `extract-figures.ts` | PDF text extraction; best-effort figure extraction (never aborts a run). |
 | `templates.ts` | Deterministic page renderers. |
+| `prompts.ts`, `prompts/types.ts` | Structured prompt wrappers: title+essence, dedup screen (`DEDUP_SAME_SCORE` = 0.9 exported here), merged deep analyze+classify (title/essence as fixed facts), citation match, relation finalize, topic synthesis/merge, chat, knowledge. Shared prompt types in `prompts/types.ts`. |
 | `wiki-journal.ts`, `runs.ts`, `progress.ts`, `llm-availability.ts` | Journal append, run status/events + `COMPILE_STEP_CATALOG` (panel step list), progress files, LLM health checks. |
 
 ## Storage layers (repo root)
@@ -57,9 +72,10 @@ No test suite. Verification = `yarn build` + browser smoke tests, run manually.
 
 ## Compile pipeline (per paper, in order)
 
-Sequential, fail-hard, incremental (`scripts/compile.ts`): each paper compiles
-against the FULL state left by the previous one; the first LLM failure aborts
-the run, processed papers persist, the rest stay in the inbox.
+Sequential, fail-hard, incremental (`scripts/compile.ts` driving the
+`scripts/compile/` modules): each paper compiles against the FULL state left by
+the previous one; the first LLM failure aborts the run, processed papers
+persist, the rest stay in the inbox.
 
 load-state → duplicate-check (free filename guard) → extract-pdf (all pages) →
 extract-title-essence (slim LLM; garbage-title retry) → resolve-title-slug
@@ -90,5 +106,5 @@ promote-subtopic, tag-to-parent, merge-topic — never auto-applied).
 - `README.md` — full architecture (§3) and operational workflows (§4).
 - `wiki/SCHEMA.md` — the LLM operating manual (conventions, invariants, workflows).
 - `GRILL.md` — canonical domain glossary.
-- `docs/adr/` — ADRs 0001 (citation map), 0002 (knowledge layer), 0003 (relations in frontmatter), 0004 (dedup-first pipeline).
-- `PROGRESS.md` — session handoff and implementation status.
+- `docs/adr/` — ADRs 0001 (citation map), 0002 (knowledge layer), 0003 (relations in frontmatter), 0004 (dedup-first pipeline), 0005 (post-stabilization refactor).
+- `PROGRESS.md` — compressed lean handoff (quick resume + environment sheet, scripts/-not-compiled caveat). `.codebase/` is the primary knowledge store; PROGRESS.md is only a quick-resume pointer. Note: `next build` does NOT typecheck `scripts/` — see notes.md.

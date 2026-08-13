@@ -6,7 +6,7 @@ import { figureLabel } from "./extract-figures";
 import { renderCitationsSection, type CitationRecord } from "./citations";
 import type { PaperFrontmatter, PaperRelation, TopicFrontmatter } from "./wiki";
 
-export function renderRelationsLines(relations: PaperRelation[]): string {
+function renderRelationsLines(relations: PaperRelation[]): string {
   return relations.length > 0
     ? relations.map((r) => `- **${r.relation}** [[${r.slug}]] — ${r.note}`).join("\n")
     : "_No relations to existing wiki papers detected._";
@@ -30,7 +30,7 @@ export function patchRelationsBlock(body: string, relations: PaperRelation[]): s
   return `${body.slice(0, start)}${newBlock}${body.slice(sectionEnd)}`;
 }
 
-export interface PaperBodyInput {
+interface PaperBodyInput {
   essence: string;
   contributions: string[];
   /** Contrastive pair (new format) or plain prose (legacy pages). */
@@ -88,7 +88,7 @@ milestone: [[${input.milestoneAnchor}]]
 `;
 }
 
-export interface TopicBodyInput {
+interface TopicBodyInput {
   fm: TopicFrontmatter;
   definitionProse: string;
   keyProperties: string[];
@@ -145,7 +145,7 @@ export type { PaperFrontmatter, TopicFrontmatter };
 // Knowledge topic articles (derived — Knowledge Compile only)
 // ---------------------------------------------------------------------------
 
-export interface KnowledgeArticleBodyInput {
+interface KnowledgeArticleBodyInput {
   definition: string;
   synthesis: string;
   grounding: { slug: string; status: "supports" | "contradicts" | "unaddressed"; note: string }[];

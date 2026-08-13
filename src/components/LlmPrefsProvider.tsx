@@ -75,7 +75,7 @@ export function LlmPrefsProvider({ children }: { children: React.ReactNode }) {
       setCatalog(data);
       setPrefsState((current) => sanitizePrefs(current, data));
     } catch (err) {
-      setCatalogError(err instanceof Error ? err.message : String(err));
+      setCatalogError(errorMessage(err));
     }
   }, []);
 
@@ -105,7 +105,7 @@ export function LlmPrefsProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       setAvailability(null);
       setAvailabilityState("unavailable");
-      setAvailability({ state: "unavailable", kind: "other", error: err instanceof Error ? err.message : String(err), provider, model, checkedAt: new Date().toISOString() });
+      setAvailability({ state: "unavailable", kind: "other", error: errorMessage(err), provider, model, checkedAt: new Date().toISOString() });
     }
   }, [loadCatalog]);
 

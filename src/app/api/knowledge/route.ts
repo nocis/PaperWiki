@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  computeKnowledgeStaleness,
   deletePiece,
   deriveKnowledgeDb,
   pieceSlugBase,
@@ -32,12 +33,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ piece: { ...piece.fm, content: piece.body } });
   }
   const [db, wikiDb, runStatus] = await Promise.all([deriveKnowledgeDb(), loadDb(), readEffectiveKnowledgeStatus()]);
-  const stale =
-    db.compiledAt !== null &&
-    (db.wikiUpdatedAt !== null &&
-      wikiDb.updatedAt !== null &&
-      new Date(db.wikiUpdatedAt) < new Date(wikiDb.updatedAt) ||
-      db.pieces.some((p) => new Date(p.updatedAt ?? p.addedAt) > new Date(db.compiledAt!)));
+  const stale = computeKnowledgeStaleness(db, wikiDb);
   return NextResponse.json({
     pieces: db.pieces,
     articles: db.articles,

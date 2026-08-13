@@ -9,7 +9,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import { today, WIKI_DIR } from "./wiki";
 
-export const WIKI_JOURNAL_DIR = path.join(WIKI_DIR, "journal");
+const WIKI_JOURNAL_DIR = path.join(WIKI_DIR, "journal");
 
 export async function appendWikiJournal(
   operation: string,

@@ -12,6 +12,7 @@
 import { randomUUID } from "crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
+import { errorMessage } from "./errors";
 
 const LOG_DIR = path.join(process.cwd(), ".log");
 
@@ -67,7 +68,7 @@ export function isStaleRunning(snapshot: RunSnapshot | null): boolean {
   );
 }
 
-export interface ProgressConfig {
+interface ProgressConfig {
   /** Tracker name — also names the .log files. */
   name: "compile" | "citations" | "knowledge";
   initialTotals: Record<string, number>;
@@ -298,7 +299,7 @@ export function createProgress(config: ProgressConfig) {
         label,
         status: "failed",
         durationMs: Date.now() - startedAt,
-        message: err instanceof Error ? err.message : String(err),
+        message: errorMessage(err),
       });
       throw err;
     }

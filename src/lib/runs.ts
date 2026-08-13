@@ -6,8 +6,6 @@ import { createProgress, isStaleRunning, STALE_RUN_MS } from "./progress";
 export { isStaleRunning, STALE_RUN_MS };
 import type { ProgressEvent, RunSnapshot } from "./progress";
 
-export const COMPILE_PROGRESS_LOG = ".log/compile-progress.jsonl";
-export const COMPILE_STATUS_PATH = ".log/compile-status.json";
 export const CITATIONS_PROGRESS_LOG = ".log/citations-progress.jsonl";
 export const CITATIONS_STATUS_PATH = ".log/citations-status.json";
 export const KNOWLEDGE_PROGRESS_LOG = ".log/knowledge-progress.jsonl";
@@ -82,8 +80,8 @@ export const finishCitationsRun = citationsRun.finish;
 export const markCitationsProcessFinished = citationsRun.markProcessFinished;
 export const readCitationsStatus = citationsRun.readStatus;
 export const createCitationsRunId = citationsRun.createRunId;
+export const runCitationsStep = citationsRun.runStep;
 export type CitationsRunSnapshot = RunSnapshot;
-export type CitationsEvent = ProgressEvent;
 
 // --- knowledge --------------------------------------------------------------
 export const startKnowledgeRun = knowledgeRun.start;
@@ -95,5 +93,5 @@ export const markKnowledgeProcessFinished = knowledgeRun.markProcessFinished;
 export const readKnowledgeStatus = knowledgeRun.readStatus;
 export const readEffectiveKnowledgeStatus = knowledgeRun.readEffectiveStatus;
 export const createKnowledgeRunId = knowledgeRun.createRunId;
+export const runKnowledgeStep = knowledgeRun.runStep;
 export type KnowledgeRunSnapshot = RunSnapshot;
-export type KnowledgeEvent = ProgressEvent;
