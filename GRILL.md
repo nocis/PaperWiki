@@ -81,3 +81,4 @@ _Avoid_: knowledge compile (that's the separate personal `knowledge/` operation)
 - "compiled name" meant the slug that names the paper page, PDF, comments dir — resolved: **Slug** is canonical.
 - "duplicate folder" implied any same-name file; resolved: a **Duplicate** is an LLM-confirmed same paper — a same-name but distinct paper keeps compiling under a disambiguated **Slug**.
 - "knowledge compile" risked covering both the personal `knowledge/` pipeline and the structured Paper Knowledge extraction — resolved: **Knowledge Compile** (personal layer) vs **Paper Knowledge amend** (literature layer) are distinct operations.
+- "caption" risked implying text inside the fullscreen figure modal — resolved: a figure's **caption** is page-level text (derived from its alt) rendered in-page only; the lightbox is a pure zoom and never re-displays it.

@@ -3,7 +3,9 @@ import { errorMessage } from "@/lib/errors";
 import { resolveModel, resolveProvider, type LLMProviderDef } from "@/lib/llm";
 import {
   listDiagramJobs,
+  readDiagramLogs,
   readPaperKnowledgeStatus,
+  setDiagramPlanEntry,
   setPaperKnowledgeEntry,
   spawnPaperKnowledgeAmend,
   startDiagramJob,
@@ -35,6 +37,10 @@ export async function GET(request: NextRequest) {
   if (request.nextUrl.searchParams.get("diagram-jobs") === "1") {
     return NextResponse.json({ jobs: listDiagramJobs(slug ?? undefined) });
   }
+  // Render provenance logs for the health page (raw responses, executed code).
+  if (request.nextUrl.searchParams.get("diagram-logs") === "1") {
+    return NextResponse.json({ logsBySlug: await readDiagramLogs() });
+  }
   const status = await readPaperKnowledgeStatus();
   const active = amendRunning();
   if (slug) {
@@ -45,10 +51,13 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * POST /api/paper-knowledge — two actions:
- * - { action: "retry", slug }: re-run the amend for a FAILED paper only. A
+ * POST /api/paper-knowledge — three actions:
+ * - { action: "retry", slug }: re-run the AMEND for a FAILED paper only. A
  *   ready block is terminal (never regenerated without a recompile); retry is
  *   the sole regenerate affordance and it only exists for failed slugs.
+ * - { action: "retry-diagrams", slug }: re-run ONLY the diagram-plan pass for
+ *   a paper whose amend is ready but whose diagramPlan phase failed. The
+ *   amend status stays untouched.
  * - { action: "render-diagram", slug, id }: render (or reuse the cached) SVG
  *   for a paper diagram brief. Click-driven, cached by brief hash.
  */
@@ -71,21 +80,38 @@ export async function POST(request: NextRequest) {
   }
   const model = resolveModel(provider, typeof body.model === "string" && body.model ? body.model : undefined);
 
-  const action = body.action === "retry" ? "retry" : body.action === "render-diagram" ? "render-diagram" : null;
-  if (!action) return bad("action must be \"retry\" or \"render-diagram\"");
+  const action =
+    body.action === "retry"
+      ? "retry"
+      : body.action === "retry-diagrams"
+        ? "retry-diagrams"
+        : body.action === "render-diagram"
+          ? "render-diagram"
+          : null;
+  if (!action) return bad("action must be \"retry\", \"retry-diagrams\" or \"render-diagram\"");
   const slug = typeof body.slug === "string" ? body.slug : "";
   if (!SLUG_RE.test(slug)) return bad("invalid slug");
 
-  if (action === "retry") {
+  if (action === "retry" || action === "retry-diagrams") {
     const status = await readPaperKnowledgeStatus();
     const entry = status.entries.find((e) => e.slug === slug);
-    if (!entry || entry.status !== "failed") {
-      return bad(`retry is only available for failed papers ("${slug}" is ${entry ? entry.status : "not tracked"})`, 409);
+    if (action === "retry") {
+      if (!entry || entry.status !== "failed") {
+        return bad(`retry is only available for failed papers ("${slug}" is ${entry ? entry.status : "not tracked"})`, 409);
+      }
+      // Retries are allowed WHILE another paper's amend is running: the runner
+      // drains pending entries and claims them atomically (no double-processing),
+      // so a concurrently spawned runner is safe.
+      await setPaperKnowledgeEntry(slug, "pending");
+    } else {
+      if (!entry || entry.status !== "ready" || entry.diagramPlan !== "failed") {
+        return bad(
+          `retry-diagrams is only available when the amend is ready and the diagram plan failed ("${slug}" is ${entry ? entry.status : "not tracked"}, plan ${entry?.diagramPlan ?? "n/a"})`,
+          409
+        );
+      }
+      await setDiagramPlanEntry(slug, "pending");
     }
-    // Retries are allowed WHILE another paper's amend is running: the runner
-    // drains pending entries and claims them atomically (no double-processing),
-    // so a concurrently spawned runner is safe.
-    await setPaperKnowledgeEntry(slug, "pending");
     const runId = await spawnPaperKnowledgeAmend(provider, model, { force: true });
     return NextResponse.json({ ok: true, runId, status: "running" }, { status: 202 });
   }

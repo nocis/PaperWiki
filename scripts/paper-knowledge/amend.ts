@@ -16,9 +16,11 @@ import { FIGURES_DIR_FOR } from "../../src/lib/extract-figures";
 import { llmJson, type LLMProviderDef } from "../../src/lib/llm";
 import {
   claimNextPaperKnowledge,
+  KNOWLEDGE_EXCERPT_CHARS,
   setPaperKnowledgeEntry,
   sleep,
   validatePaperKnowledge,
+  writeKnowledgeJson,
 } from "../../src/lib/paper-knowledge";
 import {
   PAPER_KNOWLEDGE_MAX_TOKENS,
@@ -123,7 +125,8 @@ async function loadFigureContexts(slug: string): Promise<{ contexts: PaperKnowle
 // Per-slug amend
 // ---------------------------------------------------------------------------
 
-async function amendOne(opts: {
+/** Per-slug amend — exported so the unified pipeline can drive it. */
+export async function amendOne(opts: {
   slug: string;
   provider: LLMProviderDef;
   model: string;
@@ -158,6 +161,14 @@ async function amendOne(opts: {
     throw new Error(`Paper Knowledge validation failed: ${problems.join("; ")}`);
   }
 
+  // Persist the structured knowledge + a capped text excerpt for the
+  // diagram-plan phase (it decides diagram placement from this, never
+  // re-extracting the PDF).
+  await writeKnowledgeJson(slug, {
+    knowledge,
+    textExcerpt: extracted.text.slice(0, KNOWLEDGE_EXCERPT_CHARS),
+  });
+
   const newBody = patchPaperKnowledgeBlock(page.body, slug, knowledge);
   await writePage(page.filePath, page.fm, newBody);
 
@@ -166,7 +177,7 @@ async function amendOne(opts: {
   const db = await deriveDb();
   await writeDbAtomic(db);
 
-  await setPaperKnowledgeEntry(slug, "ready");
+  await setPaperKnowledgeEntry(slug, "ready", undefined, { diagramPlan: "pending" });
   console.log(`  ✓ knowledge ready -> ${slug}`);
 }
 

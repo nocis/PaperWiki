@@ -1,4 +1,4 @@
-<!-- Priority: critical | Updated: 2026-08-13 -->
+<!-- Priority: critical | Updated: 2026-08-14 -->
 # .codebase/ Navigation
 
 | File | Tier | Contains |

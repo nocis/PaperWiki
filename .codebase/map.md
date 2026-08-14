@@ -1,10 +1,10 @@
-<!-- Priority: critical | Updated: 2026-08-13 -->
+<!-- Priority: critical | Updated: 2026-08-14 -->
 # Map
 
 Next.js 14 (App Router) + TypeScript (strict) + Tailwind. Path alias `@/*` →
 `./src/*`. Package manager: yarn.
 
-## Commands (the maintainer runs these — agents must not, per AGENTS.md)
+## Commands (the maintainer runs these — agents must not, per AGENTS.md; no test suite — verification = `yarn build` + manual browser smoke)
 
 | Command | Does |
 |---|---|
@@ -14,8 +14,6 @@ Next.js 14 (App Router) + TypeScript (strict) + Tailwind. Path alias `@/*` →
 | `yarn citations [--slug s] [--provider p] [--model m]` | Rebuild citation matches from persisted reference lists (never re-reads PDFs) |
 | `yarn lint:wiki` | Wiki invariant linter: mechanical auto-fixes + structural proposals |
 | `yarn figures` | Figure extraction helper (`bash scripts/figures.sh` → Python/PyMuPDF vendored at `.pymupdf/`) |
-
-No test suite. Verification = `yarn build` + browser smoke tests, run manually.
 
 ## Entry points
 
@@ -40,8 +38,9 @@ No test suite. Verification = `yarn build` + browser smoke tests, run manually.
     parseCitationsArgs/truncate; re-exports `errorMessage` from `src/lib/errors.ts`).
 - React components: `src/components/` — top-level panels (CitationGraph,
   PdfViewer, ChatPanel, KnowledgeDashboard, PendingCompilePanel, DiagramSlot,
-  PaperKnowledgeStatus, …) plus feature folders `compile/`, `knowledge/`,
-  `graph/`, `health/` (incl. health/PaperKnowledgePanel).
+  PaperKnowledgeStatus, FigureLightbox, …) plus feature folders `compile/`, `knowledge/`,
+  `graph/`, `health/` (incl. health/PaperKnowledgePanel,
+  health/DiagramLogsPanel).
 
 ## src/lib — domain core
 
@@ -106,15 +105,25 @@ index; self-heals interrupted runs) → finalize-relations (re-map vs full
 
 ## Paper Knowledge (post-compile amend pipeline)
 
-`scripts/paper-knowledge/amend.ts` (driven by `scripts/paper-knowledge-runner.ts`,
-invoked at the end of `scripts/compile.ts` and via `POST /api/paper-knowledge`)
-runs one deep LLM pass per new paper, inserting a "## Paper Knowledge" block
-between `## Contributions` and `## Critical Analysis`
+Dual-phase pipeline under `scripts/paper-knowledge/` (amend.ts, plan.ts,
+pipeline.ts) driven by `scripts/paper-knowledge-runner.ts` (invoked at the end
+of `scripts/compile.ts` and via `POST /api/paper-knowledge`). Amend: one deep
+LLM pass per new paper, inserting a "## Paper Knowledge" block between
+`## Contributions` and `## Critical Analysis`
 (`patchPaperKnowledgeBlock` in templates.ts — anchor regex, append fallback;
 section stripping via `stripH2Section` preserves content before AND after the
 stripped section, so amend retries never truncate the paper).
 Ready state is TERMINAL (no regeneration except reset-to-zero + recompile);
 retry flips failed→pending + force-spawn (bypasses the alive guard, always 202).
+Plan: a second pass (`plan.ts`) generates diagram briefs post-amend, writing
+`diagramPlan` fences into the Paper Knowledge block (one per H3 section, at
+section END; patchDiagramFences idempotent); claims diagramPlan:pending via
+the same lock file and reads the knowledge store
+(`.log/paper-knowledge/<slug>.json` — {knowledge, textExcerpt ≤12K}, atomic),
+NO PDF re-extraction. Both phases share ONE `.log/paper-knowledge-status.json`
+entry; retry-diagrams re-runs ONLY the plan. Runner drains amend then plan in
+one worker pool (claim amend else claim plan); compile drains both
+in-process with separate try/catch so plan failure never fails compile.
 
 - Concurrency: `claimNextPaperKnowledge()` atomically flips the next
   pending→running paper under `.log/paper-knowledge-claim.lock` (fs.open "wx",
@@ -131,13 +140,16 @@ retry flips failed→pending + force-spawn (bypasses the alive guard, always 202
   (normalized via never-throw normalizeKeyProperties — accepts legacy string
   bullets and partial objects);
   Boundaries & Technical Debt render as `#### Evidence chain` / `####
-  Technical debt` / `#### Boundaries`. Diagram slots render lazily via
-  `src/app/diagrams/[slug]/[id]/route.ts` (strips a trailing `.svg` from the
-  segment before id validation, then reads `${id}.svg`), cached by brief hash —
-  hasSvg only when the cached briefHash matches the current body brief (stale
-  SVG after retry amend fixed); retry never touches diagrams. `DiagramSlot.tsx`
-  derives the slug client-side from
-  `window.location.pathname` (prop fallback, disabled-hint placeholder).
+  Technical debt` / `#### Boundaries`.   Diagram slots: lazy render via `src/app/diagrams/[slug]/[id]/route.ts`
+  (strips a trailing `.svg` from the segment before id validation, then reads
+  `${id}.svg`; serves `.mmd` too), cache key
+  `hash(brief + '::' + format + '::' + RENDERER_VERSION)` — format switches
+  and RENDERER_VERSION bumps invalidate (currently svgjs-v3); hash-verified vs
+  meta.briefHash (mismatch → 404), immutable 1y cache; hasSvg only when the
+  cached briefHash matches the current body brief (stale SVG after retry amend
+  fixed); retry never touches diagrams. `DiagramSlot.tsx` derives the slug
+  client-side from `window.location.pathname` (prop fallback, disabled-hint
+  placeholder). Render pipeline details: "Diagram rendering" below.
 - WikiMarkdown (src/components/WikiMarkdown.tsx): diagram fence id comes from
   the fence INFO STRING via `node.data?.meta` (```diagram overview →
   lang="diagram", meta="overview"), falling back to the content's first line,
@@ -149,7 +161,34 @@ retry flips failed→pending + force-spawn (bypasses the alive guard, always 202
   (remark-math/rehype-katex) so `$...$` math typesets, with wrapBareMath
   (`src/lib/math.ts`) pre-wrapping undelimited LaTeX runs (app-safe, shared
   server+client); legacy `*Figure: ...*` caption lines (pre-R6 bodies) render
-  as plain italic text — no special centering.
+  as plain italic text — no special centering. Clicking a rendered figure
+  opens a fullscreen lightbox (src/components/FigureLightbox.tsx — createPortal
+  modal, scroll lock, Esc/backdrop/✕ close; payload alt-only, LightboxPayload.caption removed; FigureGallery untouched).
+
+### Diagram rendering (svg + mermaid)
+
+- Fence contract: ```diagram <id> <Section> <format> (default svg), first
+  content line `**Title**: <title>`, blank, then the brief; fences patched at
+  the END of the section's H3 (level-aware heading search, idempotent).
+- SVG path (`src/lib/diagram-exec.ts`): the model's single `render(SVG, draw)`
+  fn runs headless (svgdom + node:vm). TWO-PHASE runInContext (compile, then
+  invoke) — the vm timeout only guards the in-context script. After
+  createContext, VM realm intrinsics are bridged to host
+  (`vm.runInContext('Object'/'Array', ctx).prototype.constructor = host
+  Object/Array`) or `.attr({...})` silently no-ops (cross-realm constructor
+  check — see notes.md). xmlns removed pre-serialize; tspan x stripped (dy
+  kept); `data-svgjs` scrubbed from the final string. LaTeX `$...$` labels →
+  foreignObject + katex MathML (`src/lib/svg-math.ts`), painted only via
+  `<object>`, never `<img>`; autofitViewBox grows down/right only. Render
+  loop: continuation/rewrite retries (MAX_RENDER_ATTEMPTS=3, full context
+  echoed, 600s transport timeout); provenance `.raw.log` + `.code.js` under
+  `papers/compiled/<slug>_diagrams/` (served via
+  `GET /api/paper-knowledge?diagram-logs=1`, capped 16K).
+- Mermaid path: `.mmd` rendered browser-side in DiagramSlot (lazy mermaid
+  import); `.svg` served via `<object>`. diagram-jobs-client.tsx refreshes PER
+  completion (Set of non-terminal keys); DiagramSlot done-state self-limits
+  (DONE_WAIT_MS = 4s) then falls back to the button with an 'render may have
+  been interrupted' hint.
 
 ## Docs (authoritative, not duplicated here)
 

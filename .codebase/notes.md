@@ -1,8 +1,17 @@
-<!-- Priority: high | Updated: 2026-08-13 -->
+<!-- Priority: high | Updated: 2026-08-14 -->
 # Notes
 
 ## Known Issues
 
+- (closed 2026-08-14) Diagram render execution-bugs round: labels collapsed to
+  x=0 (cross-realm `.attr({...})` no-op — see Gotchas), 'Ready — refreshing…'
+  stuck up to 30min or forever (poller waited for ALL jobs + done view
+  persisted when the registry lost the job), TypeScript 'redefined' build
+  error (duplicate `const artifactUrl` in DiagramSlot). Fixes: realm bridging
+  in diagram-exec.ts; per-completion refresh in diagram-jobs-client.tsx + 4s
+  DONE_WAIT_MS fallback in DiagramSlot; duplicate removed. Verified via
+  plain-node smoke with the user's actual failing render fn — yarn
+  build/browser smoke pending per AGENTS.md.
 - (closed 2026-08-13) Cancel compile left the button stuck on "Compiling…" forever — the poll's terminal check only handled completed/failed, not cancelled. Fix: "cancelled" added to the stop condition (PendingCompilePanel.tsx). Lesson: any run-status poll must treat cancelled as terminal.
 - (closed 2026-08-13) Reset-to-zero then navigating home showed stale data (compiled papers still listed). Fix: health/page.tsx `resetToZero` calls `router.refresh()` after success to invalidate the client router cache.
 - (closed 2026-08-13) Paper Knowledge reliability (R4): stale health panel after reset (resetEpoch bump → PaperKnowledgePanel refreshKey prop re-polls in-session), retry blocked while another amend ran (claim-based retry, always 202, no more 409), 120s gateway timeouts (LLM_REQUEST_TIMEOUT_MS default 120s→300s, env-tunable with NaN guard), empty LLM responses not retried (llmJson runs a compact-budget retry once — kept as a SINGLE llmJson function, a mistaken duplicate was removed). Root evidence: all 3 papers failed — 2x 120s timeouts, 1x empty content (reasoning_tokens == completion_tokens).
@@ -15,6 +24,38 @@
 
 ## Gotchas
 
+- Cross-realm attr() no-op (svg.js inside node:vm): attr() dispatches on
+  `attr.constructor === Object`; object literals created in the VM realm have
+  the VM realm's Object as constructor, so `.attr({...})` SILENTLY no-ops
+  (labels collapsed to x=0, top-left corner). Fix: after vm.createContext,
+  bridge realm prototypes — `vm.runInContext('Object'/'Array',
+  ctx).prototype.constructor = host Object/Array`. Sandbox object props are
+  globals, but realm intrinsics must be fetched via runInContext.
+- svg.js <text> contains a <tspan> with its own x attr (synced only by
+  .move(), initial 0) that overrides the text x in rendering — strip x from
+  every tspan pre-serialize (keep dy for multiline).
+- svg.js .svg() runs writeDataToDom(), which re-adds data-svgjs attrs AFTER
+  any pre-serialize strip — scrub the final serialized string instead:
+  `svg.replace(/ data-svgjs="[^"]*"/g, '')`.
+- Job/refresh polls must be per-item-terminal, and terminal UI states need a
+  self-limit: the diagram poller refreshed only when ALL jobs settled (a
+  completed diagram waited on slower siblings, up to 30min), and a done view
+  persisted forever when the registry lost the job (sig unchanged → no
+  re-seed). Fix: refresh as soon as ANY key turns terminal (Set of
+  non-terminal keys) + 4s done-state timer falling back to a retry button
+  with an 'render may have been interrupted' hint.
+- vm sandbox gotchas (diagram renderer): TWO-PHASE runInContext — compile the
+  fn in-context, then invoke it ALSO inside runInContext (vm timeout only
+  guards the script containing the code; host-side calls of the returned fn
+  hang on infinite loops); svgdom serializer throws Invalid State Error on
+  the root's namespace-unaware xmlns — removeAttribute before serialize;
+  foreignObject is never painted in <img>-served SVG — must serve via
+  <object>.
+- Section-boundary search must be LEVEL-AWARE: sectionEndAt uses
+  /^#{3,4} /m for #### subsections but /^### |^## /m for ### sections
+  (uniform patterns misplace fences); next-heading search must start AFTER
+  the section's own heading line (own-heading-offset bug) or fences land one
+  section early.
 - `next build` (`yarn build`) does NOT typecheck `scripts/` — a green build never covers script edits. After any change under `scripts/`, smoke manually: `yarn compile`, `yarn citations`, `yarn lint:wiki` (caveat carried in the compressed PROGRESS.md handoff). Instance: the spawned amend runner crashed at startup ("parseFlags is not a function") until cli-utils.ts exported it.
 - undici global fetch hangs at connect in this app env (family-0 happy-eyeballs; IPv6 fails fast, IPv4 instant). All LLM HTTP goes through `llm-http.ts` (family-4-pinned node:https + hard 30s timeout) — do not reintroduce global fetch for LLM calls.
 - `isGarbageName` (empty / pure digits / arXiv-id only) guards titles — NOT a filename-equality guard: fixture PDFs are named by title, so matching the filename rejects valid LLM titles into "untitled-…" fallbacks.

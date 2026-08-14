@@ -60,6 +60,7 @@ import {
 import { DEDUP_SAME_SCORE } from "../src/lib/prompts";
 import { enqueuePaperKnowledge } from "../src/lib/paper-knowledge";
 import { runPaperKnowledgeAmend } from "./paper-knowledge/amend";
+import { runPaperKnowledgeDiagramPlan } from "./paper-knowledge/plan";
 import { finalizeCitations, finalizeRelations, consolidationChecks } from "./compile/finalize";
 import { moveToDuplicates } from "./compile/helpers";
 import { analyzeClassify, extractFigures, writeCitationMap } from "./compile/steps/analyze";
@@ -414,6 +415,15 @@ async function main(): Promise<void> {
       } else {
         try {
           knowledgeStats = await runPaperKnowledgeAmend({ provider, model, language: LANGUAGE });
+          // Phase 2: diagram planning — decides diagram placement from the
+          // persisted knowledge. Its own try/catch: a plan failure marks the
+          // entry's diagramPlan phase failed (amend stays ready; retry
+          // re-runs only the plan) and must not fail the compile run.
+          try {
+            await runPaperKnowledgeDiagramPlan({ provider, model, language: LANGUAGE });
+          } catch (planErr) {
+            console.error(`Diagram plan failed: ${errorMessage(planErr)}`);
+          }
         } catch (err) {
           // The amend is supplementary — a bug in it must not fail the compile run.
           console.error(`Paper Knowledge amend failed: ${errorMessage(err)}`);

@@ -21,13 +21,19 @@ export default function FigureGallery({ slug, files }: { slug: string; files: st
 
   useEffect(() => {
     if (openIndex === null) return;
+    // Lock page scroll while the lightbox is open.
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") close();
       if (event.key === "ArrowLeft") step(-1);
       if (event.key === "ArrowRight") step(1);
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = previous;
+      window.removeEventListener("keydown", onKey);
+    };
   }, [openIndex, close, step]);
 
   return (
@@ -63,7 +69,8 @@ export default function FigureGallery({ slug, files }: { slug: string; files: st
 
       {openIndex !== null && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-auto bg-black/90 p-2 sm:p-3"
+          style={{ overscrollBehaviorY: "contain" }}
           role="dialog"
           aria-modal="true"
           onClick={close}

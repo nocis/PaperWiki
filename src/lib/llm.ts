@@ -18,6 +18,9 @@ export type { LLMProviderDef };
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
+  /** Assistant-only: the model's reasoning_content, echoed back so a follow-up
+   *  call can continue the SAME reasoning instead of restarting from scratch. */
+  reasoningContent?: string;
 }
 
 /**
@@ -103,7 +106,11 @@ const LLM_REQUEST_TIMEOUT_MS = (() => {
 })();
 
 /** Transport-level POST. Throws LlmError on HTTP/network errors. */
-async function postChat(provider: LLMProviderDef, body: Record<string, unknown>): Promise<ChatCompletionResponse> {
+async function postChat(
+  provider: LLMProviderDef,
+  body: Record<string, unknown>,
+  timeoutMs: number = LLM_REQUEST_TIMEOUT_MS
+): Promise<ChatCompletionResponse> {
   // Resolve the URL and key BEFORE the request: a missing key or a wrong
   // WIKI_LLM_BASE_URL override must surface as itself, not as a transport error.
   const url = `${baseUrl(provider)}/chat/completions`;
@@ -120,13 +127,13 @@ async function postChat(provider: LLMProviderDef, body: Record<string, unknown>)
         authorization: `Bearer ${key}`,
       },
       body: JSON.stringify(body),
-      timeoutMs: LLM_REQUEST_TIMEOUT_MS,
+      timeoutMs,
     });
   } catch (err) {
     const e = err as { message?: string; code?: string };
     const timedOut = e.code === "ETIMEDOUT" || /timed out/i.test(e.message ?? "");
     const detail = timedOut
-      ? `timed out after ${LLM_REQUEST_TIMEOUT_MS / 1000}s`
+      ? `timed out after ${timeoutMs / 1000}s`
       : `${e.message ?? String(err)}${e.code ? ` (${e.code})` : ""}`;
     throw new LlmError("unreachable", `LLM gateway unreachable (provider ${provider.id}): ${detail} — POST ${url}`);
   }
@@ -314,4 +321,47 @@ export async function llmChat(opts: {
     temperature: opts.temperature ?? 0.3,
     max_tokens: opts.maxTokens ?? 4096,
   });
+}
+
+export interface LlmChatDetailedResult {
+  content: string;
+  reasoningContent?: string;
+  finishReason?: string;
+}
+
+/**
+ * Chat completion returning the raw response details — used by the diagram
+ * renderer's continuation loop. Unlike postChatCompletion it does NOT throw on
+ * empty content: an empty content with finish_reason "length" is a truncated
+ * (reasoning-burn) completion the caller must continue, not an error.
+ */
+export async function llmChatDetailed(opts: {
+  provider: LLMProviderDef;
+  model: string;
+  messages: ChatMessage[];
+  maxTokens?: number;
+  temperature?: number;
+  /** Transport timeout for THIS call (overrides LLM_REQUEST_TIMEOUT_MS). */
+  timeoutMs?: number;
+}): Promise<LlmChatDetailedResult> {
+  const data = await postChat(
+    opts.provider,
+    {
+      model: opts.model,
+      messages: opts.messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+        ...(m.reasoningContent ? { reasoning_content: m.reasoningContent } : {}),
+      })),
+      temperature: opts.temperature ?? 0.2,
+      max_tokens: opts.maxTokens ?? 32_768,
+    },
+    opts.timeoutMs
+  );
+  const choice = data.choices?.[0];
+  return {
+    content: choice?.message?.content ?? "",
+    reasoningContent: choice?.message?.reasoning_content,
+    finishReason: choice?.finish_reason,
+  };
 }

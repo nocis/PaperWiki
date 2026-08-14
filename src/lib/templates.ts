@@ -3,7 +3,13 @@
  * The LLM supplies structured content; code owns the page format (see wiki/SCHEMA.md).
  */
 import { renderCitationsSection, type CitationRecord } from "./citations";
-import type { PaperKnowledge, PaperKnowledgeFigure, TopicKeyProperty } from "./prompts";
+import type {
+  DiagramFormat,
+  PaperKnowledge,
+  PaperKnowledgeDiagramBrief,
+  PaperKnowledgeFigure,
+  TopicKeyProperty,
+} from "./prompts";
 import type { PaperFrontmatter, PaperRelation, TopicFrontmatter } from "./wiki";
 
 function renderRelationsLines(relations: PaperRelation[]): string {
@@ -194,9 +200,14 @@ export type { PaperFrontmatter, TopicFrontmatter };
 // "knowledge ready" (terminal: never regenerated except by recompile).
 // ---------------------------------------------------------------------------
 
-/** A text-brief diagram fence emitted by the template and rendered lazily. */
-export function renderDiagramFence(id: string, brief: string): string {
-  return `\`\`\`diagram ${id}\n${brief.trim()}\n\`\`\``;
+/**
+ * A text-brief diagram fence emitted by the template and rendered lazily.
+ * The section AND the render format travel in the fence INFO STRING
+ * (```diagram <id> <Section> <format>); the render path reads them back from
+ * the body. Legacy fences without the section/format tokens stay parseable.
+ */
+export function renderDiagramFence(id: string, brief: string, section?: string, format: DiagramFormat = "svg"): string {
+  return `\`\`\`diagram ${id}${section ? ` ${section}` : ""} ${format}\n${brief.trim()}\n\`\`\``;
 }
 
 /**
@@ -267,14 +278,18 @@ export function renderPaperKnowledgeBlock(knowledge: PaperKnowledge, slug: strin
     sections.set(heading, lines);
   };
 
+  const diagramsBySection = new Map<string, PaperKnowledgeDiagramBrief[]>();
+  for (const diagram of knowledge.diagrams ?? []) {
+    const list = diagramsBySection.get(diagram.section) ?? [];
+    list.push(diagram);
+    diagramsBySection.set(diagram.section, list);
+  }
+
   section("Research Purpose", [
     `**Target**: ${purpose.target}`,
     `**Bottleneck**: ${purpose.old_bottleneck}`,
     `**Usable benefit**: ${purpose.usable_benefit}`,
   ]);
-  if (knowledge.overview_diagram) {
-    section("Overview", [renderDiagramFence(knowledge.overview_diagram.id, knowledge.overview_diagram.brief)]);
-  }
   section("Key Actions", knowledge.key_actions.map((a) => `- ${a}`));
   if (knowledge.core_concepts.length > 0) {
     section(
@@ -287,11 +302,7 @@ export function renderPaperKnowledgeBlock(knowledge: PaperKnowledge, slug: strin
       ])
     );
   }
-  const mechanismLines = [knowledge.mechanism_chain.explanation];
-  if (knowledge.mechanism_chain.diagram) {
-    mechanismLines.push(renderDiagramFence(knowledge.mechanism_chain.diagram.id, knowledge.mechanism_chain.diagram.brief));
-  }
-  section("Mechanism", mechanismLines);
+  section("Mechanism", [knowledge.mechanism_chain.explanation]);
   if (knowledge.core_formulas.length > 0) {
     const formulaLines: string[] = [];
     knowledge.core_formulas.forEach((f, i) => {
@@ -327,15 +338,112 @@ export function renderPaperKnowledgeBlock(knowledge: PaperKnowledge, slug: strin
   for (const heading of PAPER_KNOWLEDGE_SECTIONS) {
     const lines = sections.get(heading) ?? [];
     const figures = figuresBySection.get(heading) ?? [];
-    if (lines.length === 0 && figures.length === 0) continue;
+    const diagrams = diagramsBySection.get(heading) ?? [];
+    if (lines.length === 0 && figures.length === 0 && diagrams.length === 0) continue;
     parts.push("", `### ${heading}`, "");
     if (lines.length > 0) parts.push(lines.join("\n"));
+    for (const diagram of diagrams) {
+      parts.push("", renderDiagramFence(diagram.id, diagram.brief, diagram.section));
+    }
     for (const figure of figures) {
       parts.push("", figureMarkdown(slug, figure));
     }
   }
 
   return parts.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Insert ```diagram fences into the Paper Knowledge block of a paper body —
+ * the diagram-plan pass (phase 2) patches the amend-written block, which
+ * carries NO fences. Existing diagram fences inside the block are stripped
+ * first, so re-running the pass replaces the previous plan instead of
+ * duplicating it. Each fence is placed at its diagram's resolved position:
+ * 1. `location` matches a `#### <subsection>` heading → end of that
+ *    subsection; 2. `location` matches an exact content line → after that
+ *    line's paragraph; 3. otherwise → end of the section. Sections absent
+ * from the block are skipped. Returns the body unchanged when the block is
+ * missing.
+ */
+export function patchDiagramFences(body: string, diagrams: PaperKnowledgeDiagramBrief[]): string {
+  const blockStart = body.search(/^## Paper Knowledge\s*$/m);
+  if (blockStart === -1) return body;
+  const after = body.slice(blockStart + 1);
+  const nextH2 = after.search(/^## /m);
+  const blockEnd = nextH2 === -1 ? body.length : blockStart + 1 + nextH2;
+  const stripped = body.slice(blockStart, blockEnd).replace(/```diagram [^\n]*\n[\s\S]*?```/g, "");
+
+  const insertions: { at: number; text: string }[] = [];
+  for (const diagram of diagrams) {
+    const sectionHeading = stripped.search(new RegExp(`^### ${escapeRegExp(diagram.section)}\\s*$`, "m"));
+    if (sectionHeading === -1) continue; // section absent from the block
+    const sectionEnd = sectionEndAt(stripped, sectionHeading);
+    const title = diagram.title?.trim() ? `**Title**: ${diagram.title.trim()}\n\n` : "";
+    insertions.push({
+      at: resolveInsertionPoint(stripped, sectionHeading, sectionEnd, diagram.location),
+      text: renderDiagramFence(diagram.id, `${title}${diagram.brief}`, diagram.section, diagram.format),
+    });
+  }
+
+  // Insert from the end backwards so earlier insertions never shift later ones.
+  insertions.sort((a, b) => b.at - a.at);
+  let block = stripped;
+  for (const { at, text } of insertions) {
+    const before = block.slice(0, at).replace(/\s+$/, "");
+    const afterPart = block.slice(at).replace(/^\s+/, "");
+    block = `${before}\n\n${text}\n\n${afterPart}`;
+  }
+  return body.slice(0, blockStart) + block + body.slice(blockEnd);
+}
+
+/**
+ * End position of the block whose heading line starts at `heading`: the
+ * position right before the NEXT heading. A `### ` section ends at the next
+ * `### ` / `## ` (its `#### ` subsections are INSIDE it); a `#### `
+ * subsection ends at the next `#### ` / `### `. The next-heading search must
+ * start AFTER the heading's own line — a bare /^### /m search would match
+ * the heading itself at offset 0.
+ */
+function sectionEndAt(text: string, heading: number): number {
+  const tail = text.slice(heading);
+  const isSubsection = /^####\s/.test(tail);
+  const headingLineEnd = tail.indexOf("\n");
+  const afterHeading = headingLineEnd === -1 ? "" : tail.slice(headingLineEnd + 1);
+  const nextHeading = afterHeading.search(isSubsection ? /^#{3,4} /m : /^### |^## /m);
+  return nextHeading === -1 ? text.length : heading + headingLineEnd + 1 + nextHeading;
+}
+
+/** Resolve a diagram's insertion point within its section range. */
+function resolveInsertionPoint(text: string, sectionHeading: number, sectionEnd: number, location?: string): number {
+  if (!location) return sectionEnd;
+  // 1. A `#### <location>` subsection heading.
+  const subHeading = text
+    .slice(sectionHeading, sectionEnd)
+    .search(new RegExp(`^#### ${escapeRegExp(location)}\\s*$`, "m"));
+  if (subHeading !== -1) return sectionEndAt(text, sectionHeading + subHeading);
+  // 2. An exact content line (trimmed) matching the location — insert after
+  //    its paragraph (up to the next blank line or heading).
+  const slice = text.slice(sectionHeading, sectionEnd);
+  const lines = slice.split("\n");
+  let cursor = sectionHeading;
+  for (const line of lines) {
+    if (line.trim() === location) {
+      const rest = text.slice(cursor + line.length, sectionEnd);
+      const blank = rest.search(/\n\s*\n/);
+      const nextHeading = rest.search(/^#{3,4} /m);
+      const candidates = [sectionEnd];
+      if (blank !== -1) candidates.push(cursor + line.length + blank);
+      if (nextHeading !== -1) candidates.push(cursor + line.length + nextHeading);
+      return Math.min(...candidates);
+    }
+    cursor += line.length + 1;
+  }
+  // 3. Fallback: end of the section.
+  return sectionEnd;
 }
 
 /**

@@ -122,11 +122,39 @@ export interface RelationFinalizeResponse {
 // deep pass over the full paper text, seeded by the compile facts).
 // ---------------------------------------------------------------------------
 
+/** Rendering route for a diagram: mermaid (cheap, simple flows) or svg.js (math/custom). */
+export type DiagramFormat = "mermaid" | "svg";
+
 export interface PaperKnowledgeDiagramBrief {
-  /** Diagram role on the paper page: "overview" or "mechanism". */
+  /** Short slug identifying the diagram (e.g. "overview", "mechanism", "formula-1"). */
   id: string;
-  /** Text description — NOT raw SVG; an on-demand LLM call renders it later. */
+  /** Paper Knowledge H3 the diagram lives under (one of PAPER_KNOWLEDGE_SECTIONS). */
+  section: string;
+  /** Short human heading shown above the diagram (at most ~6 words). */
+  title: string;
+  /**
+   * Text description — NOT raw SVG; an on-demand LLM call renders it later
+   * (via svg.js backend code or Mermaid source). Also doubles as the "How to
+   * read this diagram" caption, so it must describe the diagram in
+   * reader-facing terms.
+   */
   brief: string;
+  /**
+   * Positional anchor inside the section: the `####` subsection heading
+   * (e.g. "Formula 2"), a concept term, a QA question, or an exact content
+   * fragment the diagram belongs right after. Omit to place at section end.
+   */
+  location?: string;
+  /** Rendering route chosen by the planner. */
+  format: DiagramFormat;
+}
+
+/**
+ * Output of the dedicated diagram-planning pass (phase 2 of the Paper
+ * Knowledge amend): which sections need a diagram, and how to draw it.
+ */
+export interface PaperDiagramPlan {
+  diagrams: PaperKnowledgeDiagramBrief[];
 }
 
 /** Per-figure context captured at extraction time (scripts/extract_figures.py). */
@@ -170,11 +198,11 @@ export interface PaperKnowledgeFormula {
 
 export interface PaperKnowledge {
   research_purpose: { target: string; old_bottleneck: string; usable_benefit: string };
-  /** Always present for a research paper (the opening reading logic). */
-  overview_diagram: PaperKnowledgeDiagramBrief | null;
+  /** LLM-chosen diagram briefs: which sections get a diagram, and how to draw it. */
+  diagrams: PaperKnowledgeDiagramBrief[];
   key_actions: string[];
   core_concepts: PaperKnowledgeConcept[];
-  mechanism_chain: { explanation: string; diagram: PaperKnowledgeDiagramBrief | null };
+  mechanism_chain: { explanation: string };
   core_formulas: PaperKnowledgeFormula[];
   comprehensive_qa: { question: string; answer: string }[];
   boundaries_and_debt: { evidence_chain: string; technical_debt: string; boundaries: string };

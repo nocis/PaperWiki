@@ -1,4 +1,4 @@
-<!-- Priority: high | Updated: 2026-08-13 -->
+<!-- Priority: high | Updated: 2026-08-14 -->
 # Conventions
 
 ## Reviewed
@@ -45,3 +45,15 @@
   match (2026-08-13). Caveat: pre-R6 terminal bodies were NOT re-amended —
   their embeds keep the old sanitized alt + a legacy `*Figure:*` line (which
   now renders as plain italic; fix only via reset-to-zero + recompile).
+- Diagram fence contract: ```diagram <id> <Section> <format> (default svg),
+  first content line `**Title**: <title>`, blank line, then the brief; legacy
+  2-token fences parse fine (extractDiagramFormat defaults svg).
+  patchDiagramFences inserts each fence at the END of its H3 section
+  (level-aware heading search, idempotent). Evidence: prompts/types.ts
+  diagram slot types, templates.ts patchDiagramFences,
+  scripts/paper-knowledge/plan.ts.
+- SVG render prompts invite expressive code (helpers, groups, annotations,
+  legends) instead of compactness; the fixed output contract stays: exactly
+  one `render(SVG, draw)`, canvas margins, geometry correctness
+  (text-anchor:middle + dominant-baseline:middle centering). Evidence:
+  prompts.ts SVG_RENDER_SYSTEM v3, RENDERER_VERSION svgjs-v3 (2026-08-14).

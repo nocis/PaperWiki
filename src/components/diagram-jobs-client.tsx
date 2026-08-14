@@ -24,7 +24,8 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 let pollInFlight = false;
 let pollSlug: string | null = null;
 let routerRef: { refresh: () => void } | null = null;
-let sawNonTerminal = false;
+/** Keys observed non-terminal since the last page refresh (per-completion refresh). */
+let trackedNonTerminal = new Set<string>();
 
 const POLL_INTERVAL_MS = 1000;
 
@@ -59,7 +60,6 @@ function ensurePoll() {
   if (pollSlug === null) return;
   if (pollTimer !== null) return;
   if (!anyNonTerminal(pollSlug)) return;
-  sawNonTerminal = true;
   void tick();
   pollTimer = setInterval(() => void tick(), POLL_INTERVAL_MS);
 }
@@ -103,12 +103,26 @@ async function tick() {
       jobs = next;
       emit();
     }
-    const stillNonTerminal = anyNonTerminal(pollSlug);
-    if (!stillNonTerminal && sawNonTerminal) {
-      sawNonTerminal = false;
+    // Per-completion refresh: refresh the page as soon as ANY previously
+    // non-terminal key turns terminal (done or failed) — a finished diagram
+    // appears immediately instead of waiting for slower sibling renders.
+    for (const [key, v] of next) {
+      if (v.slug !== pollSlug) continue;
+      if (v.status === "queued" || v.status === "rendering") trackedNonTerminal.add(key);
+    }
+    let completed = false;
+    for (const key of trackedNonTerminal) {
+      const v = next.get(key);
+      if (!v || (v.status !== "queued" && v.status !== "rendering")) {
+        completed = true;
+        break;
+      }
+    }
+    if (completed) {
+      trackedNonTerminal = new Set();
       routerRef?.refresh();
     }
-    if (!stillNonTerminal) stopPoll();
+    if (!anyNonTerminal(pollSlug)) stopPoll();
   } catch {
     /* transient — keep polling */
   } finally {
@@ -122,6 +136,7 @@ function seedAndActivate(slug: string, initialJobs: DiagramJobView[]) {
   for (const [, v] of jobs) if (v.slug !== slug) next.set(v.key, v);
   for (const j of initialJobs) next.set(j.key, { ...j });
   jobs = next;
+  trackedNonTerminal = new Set();
   emit();
   ensurePoll();
 }
@@ -129,6 +144,7 @@ function seedAndActivate(slug: string, initialJobs: DiagramJobView[]) {
 function deactivate(slug: string) {
   stopPoll();
   if (pollSlug === slug) pollSlug = null;
+  trackedNonTerminal = new Set();
   let changed = false;
   const next = new Map<string, DiagramJobView>();
   for (const [k, v] of jobs) {

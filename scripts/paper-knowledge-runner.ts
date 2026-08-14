@@ -1,14 +1,18 @@
 /**
- * Paper Knowledge amend — background runner, spawned by the compile API route
- * (and awaited in-process by `yarn compile`). NOT an operator-facing command;
- * there is no package.json script for it.
+ * Paper Knowledge amend + diagram plan — background runner, spawned by the
+ * compile API route (and awaited in-process by `yarn compile`). NOT an
+ * operator-facing command; there is no package.json script for it.
+ *
+ * Drains BOTH pipeline phases in ONE worker pool (amend + diagram plan), so a
+ * paper's plan starts the moment its own amend succeeds; a plan failure never
+ * touches a successful amend.
  *
  * Usage: tsx scripts/paper-knowledge-runner.ts [--provider <id>] [--model <id>]
  *                                          [--slug <slug>] [--concurrency <n>]
  */
 import { errorMessage, parseFlags } from "./lib/cli-utils";
 import { resolveModel, resolveProvider } from "../src/lib/llm";
-import { runPaperKnowledgeAmend } from "./paper-knowledge/amend";
+import { runPaperKnowledgePipeline } from "./paper-knowledge/pipeline";
 
 async function main(): Promise<void> {
   const flags = parseFlags(process.argv.slice(2));
@@ -17,7 +21,7 @@ async function main(): Promise<void> {
   const slug = flags.slug?.[0];
   const concurrency = flags.concurrency?.[0] !== undefined ? Number(flags.concurrency[0]) : undefined;
 
-  const summary = await runPaperKnowledgeAmend({ provider, model, slug, concurrency });
+  const summary = await runPaperKnowledgePipeline({ provider, model, slug, concurrency });
   if (summary.failed > 0) process.exitCode = 1;
 }
 

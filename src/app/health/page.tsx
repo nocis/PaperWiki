@@ -7,6 +7,7 @@ import { CitationMapPanel } from "@/components/health/CitationMapPanel";
 import { LintPanel } from "@/components/health/LintPanel";
 import { DangerZone } from "@/components/health/DangerZone";
 import PaperKnowledgePanel from "@/components/health/PaperKnowledgePanel";
+import DiagramLogsPanel from "@/components/health/DiagramLogsPanel";
 
 export default function HealthDashboard() {
   const {
@@ -104,6 +105,8 @@ export default function HealthDashboard() {
       {view !== "running" && report && <LintPanel report={report} />}
 
       <PaperKnowledgePanel refreshKey={resetEpoch} />
+
+      <DiagramLogsPanel refreshKey={resetEpoch} />
 
       <DangerZone resetting={resetting} resetResult={resetResult} onReset={() => void resetToZero()} />
     </div>

@@ -191,6 +191,13 @@ export async function POST(request: NextRequest) {
       }
     }
   }
+  // Persisted per-paper knowledge JSON + text excerpts (diagram-plan input).
+  try {
+    await fs.rm(path.join(LOG_DIR, "paper-knowledge"), { recursive: true, force: true });
+    removedFiles.push(path.join(LOG_DIR, "paper-knowledge"));
+  } catch {
+    /* already gone */
+  }
 
   await appendWikiJournal("reset", "State reset to zero", [
     `compiled papers moved to papers/new/: ${moved.length > 0 ? moved.join(", ") : "(none)"}${
@@ -198,7 +205,7 @@ export async function POST(request: NextRequest) {
     }`,
     `favorite articles kept: ${keptFavorites.length > 0 ? keptFavorites.join(", ") : "(none)"}`,
     `kept: wiki/SCHEMA.md, wiki/journal/, knowledge/pieces/, comments/`,
-    `cleared: paper knowledge blocks (wiki page wipe), diagram caches (papers/compiled/<slug>_diagrams/), paper-knowledge status`,
+    `cleared: paper knowledge blocks (wiki page wipe), diagram caches (papers/compiled/<slug>_diagrams/), paper-knowledge status + persisted knowledge JSON`,
   ]);
 
   return NextResponse.json({

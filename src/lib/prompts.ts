@@ -2,6 +2,7 @@ import type { ChatMessage } from "./llm";
 import type {
   DeepAnalysis,
   Classification,
+  PaperDiagramPlan,
   PaperKnowledge,
   PaperKnowledgeFigureContext,
   PaperMergedResponse,
@@ -20,6 +21,7 @@ import type {
 export type {
   DeepAnalysis,
   Classification,
+  PaperDiagramPlan,
   PaperKnowledge,
   PaperKnowledgeFigure,
   PaperKnowledgeFigureContext,
@@ -532,12 +534,6 @@ FORMULA PROCESSING (core_formulas):
 DEEP DIVE (comprehensive_qa):
 - At least 3 questions a senior researcher would ask: architectural trade-offs, edge cases, "why not the obvious baseline?", extreme scaling, failure modes. Answer analytically, based ONLY on the paper. If the paper is silent on a point, say "the paper does not address this".
 
-DIAGRAM BRIEFS (overview_diagram, mechanism_chain.diagram):
-- These are TEXT BRIEFS — never SVG, never code. A brief is a compact instruction (2-6 sentences) describing the diagram an illustrator should draw: which boxes/nodes, which labels, the arrows between them, and any trade-off or chain it must express.
-- overview_diagram must exist for a research paper: compress the reading logic (scenario pressures -> old bottlenecks -> key actions -> conclusion). It is NOT a table of contents — it must not repeat section names.
-- mechanism_chain.diagram: only when the mechanism involves >3 steps, roles, or variables, or has chronological order / preconditions / failure chains / trade-offs. Otherwise null.
-- Diagrams draw only: Input/Premise -> Key Actions -> Intermediate Constraints -> Output/Result. Keep every label short.
-
 EVIDENCE & BOUNDARIES (boundaries_and_debt):
 - evidence_chain: which parts of this analysis are grounded in the paper's own text vs. which are inferences the analyst (you) draws beyond it. Only two categories: "paper" and "inference".
 - technical_debt: hidden costs the paper introduces — memory/FLOPs overheads, training cost, sensitivity to hyperparameters, scaling limits, engineering friction.
@@ -567,17 +563,15 @@ SELF-CHECK before returning:
 - The causal chain from old bottleneck to key actions is explicit.
 - Core formulas have variable explanations and intuition, or are absent.
 - Concepts are one-per-object with operational translations.
-- Diagram briefs are prose instructions, not SVG.
 - No mechanical section-by-section summary.
 - Every math symbol in any prose field is inside $...$ with real LaTeX (no ASCII-math).
 
 Return exactly this JSON shape:
 {
   "research_purpose": { "target": string, "old_bottleneck": string, "usable_benefit": string },
-  "overview_diagram": { "id": "overview", "brief": string } | null,
   "key_actions": string[],
   "core_concepts": [ { "term": string, "definition": string, "problem_solved": string, "relationship": string } ],
-  "mechanism_chain": { "explanation": string, "diagram": { "id": "mechanism", "brief": string } | null },
+  "mechanism_chain": { "explanation": string },
   "core_formulas": [ { "formula": string, "question_answered": string, "variables": [ { "symbol": string, "meaning": string } ], "intuition": string } ],
   "comprehensive_qa": [ { "question": string, "answer": string } ],
   "boundaries_and_debt": { "evidence_chain": string, "technical_debt": string, "boundaries": string },
@@ -613,4 +607,132 @@ ${opts.figures
 Return JSON with exactly the fields described in the system message.`;
 
   return { system, user };
+}
+
+// ---------------------------------------------------------------------------
+// Paper Knowledge — diagram-planning pass (phase 2). Decides WHERE diagrams
+// are needed from the ALREADY-EXTRACTED structured knowledge (+ a capped text
+// excerpt for cross-checking) and writes the drawing briefs. Separate from the
+// extraction pass so diagram judgment never competes with extraction.
+// ---------------------------------------------------------------------------
+
+export function paperDiagramPlanPrompt(opts: {
+  knowledge: PaperKnowledge;
+  textExcerpt: string;
+  language: string;
+}): { system: string; user: string } {
+  const system = `You decide which sections of a structured "Paper Knowledge" block need an SVG diagram, and write the drawing briefs. Return strict JSON only — no prose outside the JSON object.
+
+WHEN A DIAGRAM IS NEEDED — default to adding a diagram for slightly complex content; do NOT wait to be asked. Add a diagram when ANY complexity criterion applies to a section's content:
+- More than 3 steps, roles, modules, or variables need explaining.
+- The content involves chronological order, preconditions, failure chains, trade-offs, budget allocation, or scheduling decisions.
+- Multiple technical objects appear in the same section and require comparison.
+- A formula involves a numerator / denominator / constraints / optimization goals.
+- A text-only explanation would exceed 2 paragraphs, or the reader would have to mentally piece together the process.
+If a complex mechanism, comparison, formula, or scheduling logic lacks a diagram, ADD one. Do NOT add diagrams to simple content that is fully clear from prose alone — never decorative, never "for completeness".
+
+DIAGRAM DESIGN RULES:
+- Diagrams draw only the necessary structure: Input/Premise -> Key Actions -> Intermediate Constraints -> Output/Result. Keep every label short (at most ~6 words).
+- Prefer action chains for processes; side-by-side boxes for contrasts; draw variable relationships when the content involves formulas.
+- A diagram is part of the main text explanation, not a decoration.
+
+BRIEF FORMAT (per diagram):
+- These are TEXT BRIEFS — never SVG, never code. A brief is a compact instruction (2-6 sentences) describing the diagram an illustrator should draw: which boxes/nodes, which labels (taken from the actual knowledge content below), the arrows between them, and any chain/trade-off it must express.
+- The brief doubles as the "How to read this diagram" caption on the page, so write it in reader-facing terms (what to look at, what the arrows mean), not as internal notes.
+- "section" must be one of the Paper Knowledge headings present in the content: "Research Purpose", "Overview", "Key Actions", "Core Concepts", "Mechanism", "Core Formulas", "Deep Dive", "Boundaries & Technical Debt".
+- "id": a short slug reflecting the content (e.g. "overview", "mechanism", "formula-1", "key-actions-chain", "tradeoffs"). Use "overview" for the opening reading-logic diagram (recommended for every research paper — it is NOT a table of contents and must not repeat section names) and "mechanism" for the mechanism-chain diagram.
+- "title": a short human heading for the diagram (at most 6 words), shown above it — e.g. "Predicted-noise schedule" or "DDIM trade-off frontier". Not a sentence.
+- "format": choose "mermaid" or "svg".
+  * Use "mermaid" when Mermaid can express the diagram cleanly: simple linear flows, side-by-side comparisons, small graphs, decision branches — with plain labels (no math). Mermaid is cheap and fast — prefer it whenever it fits.
+  * Use "svg" when labels contain math ($...$), or the diagram needs custom shapes, precise layout, or visual emphasis that Mermaid cannot express. Reserve the expensive renderer for diagrams where it earns its keep.
+- "location" (optional): the \`####\` subsection heading (e.g. "Formula 2"), a concept term, a QA question, or an exact content fragment the diagram belongs right after — so it is inserted next to the content it explains, not stacked at the end of the section. Omit to place it at the end of the section.
+- At most 10 diagrams total.
+
+GROUNDING:
+- Every label and fact in a brief must come from the structured content in the user message (the "PAPER TEXT EXCERPT" is only for cross-checking facts when the structured content is ambiguous). Never invent numbers, names, or relationships.
+- Write all prose in language "${opts.language}".
+
+SELF-CHECK before returning:
+- Every section whose mechanism/comparison/formula/scheduling logic is complex carries a diagram brief.
+- No diagram is present purely for decoration.
+- Briefs are prose instructions, not SVG; labels are short and grounded in the content.
+- "overview" exists for the reading logic unless the paper genuinely lacks one.
+- "format" is "mermaid" unless math or custom layout forces "svg"; "title" is short; "location" is set when the diagram belongs to a specific subsection.
+- At most 10 diagrams.
+
+Return exactly this JSON shape:
+{
+  "diagrams": [ { "id": string, "section": string, "title": string, "brief": string, "location": string | null, "format": "mermaid" | "svg" } ]
+}`;
+
+  const user = `STRUCTURED PAPER KNOWLEDGE (decide diagrams from THIS):
+${JSON.stringify(opts.knowledge)}
+
+PAPER TEXT EXCERPT (cross-check facts only — do not add content that is absent from the structured knowledge above):
+${opts.textExcerpt.slice(0, 4000) || "(none)"}
+
+Return JSON with exactly the fields described in the system message.`;
+
+  return { system, user };
+}
+
+// ---------------------------------------------------------------------------
+// Diagram RENDERING prompts (phase 3, on click): svg.js code or Mermaid source.
+// ---------------------------------------------------------------------------
+
+/**
+ * v2 svg.js render prompt — freedom-first: the LLM picks the layout strategy
+ * and the code size; the fixed parts are the OUTPUT CONTRACT, the canvas
+ * rules, and the geometry CORRECTNESS conventions (centered labels, label-fit,
+ * edge-to-edge arrows) that eliminate drift and overlap. No palette spec, no
+ * example, no line cap.
+ */
+export const SVG_RENDER_SYSTEM = `You write one self-contained svg.js (svgdotjs/svg.js v3) drawing program for a research paper wiki page. Output exactly ONE function:
+
+function render(SVG, draw) { ...; return draw; }
+
+- No imports, no require, no process, no console, no globals beyond SVG and draw. A lone \`\`\`js fence around the function is tolerated (it is stripped).
+- Output the function directly — no planning text, no explanation before or after. Longer, expressive code is WELCOME: compose small helper functions for repeated elements, use groups, annotations, tick marks, legends, spacing refinements. Do not compress the diagram to save lines — express the content fully and beautifully.
+
+THE CANVAS
+- draw is an already-mounted empty <svg>. Always call draw.viewbox(0, 0, W, H) with dimensions that fit the content, keeping at least 40px of empty margin on every side; nothing may touch the viewBox edges.
+
+LAYOUT — YOU DECIDE
+- Choose the strategy that best expresses the brief: left-to-right action chains, vertical top-down flows, side-by-side comparisons, grouped clusters, or diamonds for constraints/branches. Match the brief's structure — do not force a chain when the content needs a comparison or a branch.
+- Draw only the necessary structure: Input/Premise -> Key Actions -> Intermediate Constraints -> Output/Result. The diagram is part of the main text explanation, not a decoration.
+
+GEOMETRY CORRECTNESS (not optional)
+- Center every label in its box: set text-anchor="middle" and dominant-baseline="middle" on the text and place it at the box's center (x = boxX + boxW/2, y = boxY + boxH/2). Never approximate label positions with offsets like y + 22 — anchored centering is exact.
+- A label must fit inside its box: at most ~6 words; if a label is long, split it into two short lines or widen the box. Never let text overflow its box or the viewBox.
+- Arrows connect box-edge to box-edge (start/end on the borders, never crossing other boxes). Keep at least 20px between any two elements.
+- Align coordinates on a tidy grid; keep parallel arrows evenly spaced.
+
+STYLE
+- Readable sans-serif font (12-14px), neutral grays with ONE accent color, thin strokes, subtle rounded corners. No shadows, no gradients, no emoji. Visual emphasis only where the brief calls for it (e.g. a dashed failure path).
+
+MATH LABELS
+- Math inside labels as $...$ LaTeX (e.g. "$x_{t-1}$", "$\\sqrt{\\lambda}$") — the server renders it as real typeset math. Keep formulas short (a symbol or a short expression).
+
+SELF-CHECK before finishing:
+- Labels are centered and fully inside their boxes; no two elements overlap; arrows touch the boxes they connect; nothing crosses the margin; viewBox is set.`;
+
+/** Mermaid render prompt — cheap route for simple flows/comparisons (no math). */
+export const MERMAID_RENDER_SYSTEM = `You convert a short text brief into ONE Mermaid diagram for a research paper wiki page. Output ONLY the Mermaid source — no markdown fences (a lone \`\`\`mermaid wrapper is tolerated), no explanations, no planning text.
+
+RULES:
+- Use flowchart LR (or graph TD for vertical pipelines); subgraph for grouped clusters.
+- Node shapes: A["Label"] for boxes; A{"Label"} for decisions/constraints; A(("Label")) for endpoints.
+- Edges: A --> B; A -->|short label| B; A -.-> B for failure/negative paths (dashed).
+- Keep labels concise (at most ~6 words), plain text — NO LaTeX/math (math diagrams must be rendered as svg, not mermaid).
+- Escape double quotes inside labels.
+- Keep it under 40 lines.`;
+
+/** Follow-up prompt for a truncated svg.js/Mermaid generation. */
+export function renderContinuePrompt(artifact = "the render(SVG, draw) function"): string {
+  return `Your previous response was cut off (finish_reason: length). Continue EXACTLY from where you stopped — output only the REMAINING part of ${artifact}, no preamble.`;
+}
+
+/** Follow-up prompt for a complete-but-broken generation. */
+export function renderRewritePrompt(error: string, artifact = "function render(SVG, draw) { ...; return draw; }"): string {
+  return `Your previous attempt failed: ${error || "empty response"}. Output the COMPLETE corrected ${artifact} — you may reuse your previous work, fixing the problem. Output ONLY that.`;
 }
